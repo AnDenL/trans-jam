@@ -1,11 +1,12 @@
 use std::process::exit;
 
+use ggrs::{PlayerType, SessionBuilder, UdpNonBlockingSocket};
 use macroquad::{
     prelude::*,
     ui::{hash, root_ui, widgets},
 };
 
-use crate::State::{self};
+use crate::{ActiveGame, FPS, GgrsConfig, State};
 
 pub fn draw_menu(state: &mut State, username: &mut String) {
     widgets::InputText::new(hash!())
@@ -16,62 +17,57 @@ pub fn draw_menu(state: &mut State, username: &mut String) {
         .size(vec2(200.0, 50.0))
         .ui(&mut *root_ui(), username);
 
-    let host = widgets::Button::new("Host")
+    if widgets::Button::new("Host")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
             screen_width() * 0.5 - 230.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    let join = widgets::Button::new("Join")
+        .ui(&mut *root_ui())
+    {
+        *state = State::Host;
+    }
+    if widgets::Button::new("Join")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
             screen_width() * 0.5 - 170.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    let setting = widgets::Button::new("Settings")
+        .ui(&mut *root_ui())
+    {
+        *state = State::Join;
+    }
+    if widgets::Button::new("Settings")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
             screen_width() * 0.5 - 110.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    let exit_button = widgets::Button::new("Exit")
+        .ui(&mut *root_ui())
+    {
+        *state = State::Settings;
+    }
+    if widgets::Button::new("Exit")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
             screen_width() * 0.5 - 50.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    if host {
-        *state = State::Host;
-    }
-    if join {
-        *state = State::Join;
-    }
-    if setting {
-        *state = State::Settings;
-    }
-    if exit_button {
+        .ui(&mut *root_ui())
+    {
         exit(0);
     }
 }
 
 pub fn draw_settings(state: &mut State) {
-    let back = widgets::Button::new("Back")
+    if widgets::Button::new("Back")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
             screen_width() * 0.5 - 50.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    if back {
+        .ui(&mut *root_ui())
+    {
         *state = State::Menu;
     }
 }
@@ -89,7 +85,6 @@ pub fn draw_join(
         ))
         .size(vec2(200.0, 50.0))
         .ui(&mut *root_ui(), username);
-
     widgets::InputText::new(hash!())
         .position(vec2(
             screen_width() * 0.5 - 100.0,
@@ -97,7 +92,6 @@ pub fn draw_join(
         ))
         .size(vec2(200.0, 50.0))
         .ui(&mut *root_ui(), port);
-
     widgets::InputText::new(hash!())
         .position(vec2(
             screen_width() * 0.5 - 100.0,
@@ -106,27 +100,26 @@ pub fn draw_join(
         .size(vec2(200.0, 50.0))
         .ui(&mut *root_ui(), address);
 
-    let start = widgets::Button::new("Start")
+    if widgets::Button::new("Start")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
-            screen_width() * 0.5 - 110.0,
+            screen_width() * 0.5 - 80.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    let back = widgets::Button::new("Back")
-        .position(vec2(
-            screen_width() * 0.5 - 100.0,
-            screen_width() * 0.5 - 50.0,
-        ))
-        .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    if start {
-        *state = State::Menu;
+        .ui(&mut *root_ui())
+    {
+        let my_local_port = "7576";
+        let game = start_join(my_local_port, address, port);
+        *state = State::Game(Box::new(game));
     }
-
-    if back {
+    if widgets::Button::new("Back")
+        .position(vec2(
+            screen_width() * 0.5 - 100.0,
+            screen_width() * 0.5 - 20.0,
+        ))
+        .size(vec2(200.0, 50.0))
+        .ui(&mut *root_ui())
+    {
         *state = State::Menu;
     }
 }
@@ -139,7 +132,6 @@ pub fn draw_host(state: &mut State, username: &mut String, port: &mut String) {
         ))
         .size(vec2(200.0, 50.0))
         .ui(&mut *root_ui(), username);
-
     widgets::InputText::new(hash!())
         .position(vec2(
             screen_width() * 0.5 - 100.0,
@@ -148,27 +140,70 @@ pub fn draw_host(state: &mut State, username: &mut String, port: &mut String) {
         .size(vec2(200.0, 50.0))
         .ui(&mut *root_ui(), port);
 
-    let start = widgets::Button::new("Start")
+    if widgets::Button::new("Start")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
-            screen_width() * 0.5 - 110.0,
+            screen_width() * 0.5 - 140.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    let back = widgets::Button::new("Back")
+        .ui(&mut *root_ui())
+    {
+        let game = start_host(&port);
+        *state = State::Game(Box::new(game));
+    }
+    if widgets::Button::new("Back")
         .position(vec2(
             screen_width() * 0.5 - 100.0,
-            screen_width() * 0.5 - 50.0,
+            screen_width() * 0.5 - 80.0,
         ))
         .size(vec2(200.0, 50.0))
-        .ui(&mut *root_ui());
-
-    if start {
+        .ui(&mut *root_ui())
+    {
         *state = State::Menu;
     }
+}
 
-    if back {
-        *state = State::Menu;
-    }
+fn start_host(port_str: &str) -> ActiveGame {
+    let port: u16 = port_str.parse().unwrap();
+    let socket = UdpNonBlockingSocket::bind_to_port(port).expect("Port is occupied!");
+
+    let session = SessionBuilder::<GgrsConfig>::new()
+        .with_num_players(2)
+        .unwrap()
+        .with_fps(FPS as usize)
+        .unwrap()
+        .with_input_delay(1)
+        .add_player(PlayerType::Local, 0)
+        .unwrap()
+        .add_player(PlayerType::Remote("127.0.0.1:7576".parse().unwrap()), 1)
+        .unwrap()
+        .start_p2p_session(socket)
+        .unwrap();
+
+    ActiveGame::new(session, 0)
+}
+
+fn start_join(local_port_str: &str, host_addr_str: &str, host_port_str: &str) -> ActiveGame {
+    let local_port: u16 = local_port_str.parse().expect("Incorrect local port");
+    let host_port: u16 = host_port_str.parse().expect("Incorrect hosts port");
+
+    let host_socket_addr = format!("{}:{}", host_addr_str, host_port)
+        .parse()
+        .expect("Incorrect IP format");
+    let socket = UdpNonBlockingSocket::bind_to_port(local_port).expect("Port is occupied!");
+
+    let session = SessionBuilder::<GgrsConfig>::new()
+        .with_num_players(2)
+        .unwrap()
+        .with_fps(FPS as usize)
+        .unwrap()
+        .with_input_delay(1)
+        .add_player(PlayerType::Remote(host_socket_addr), 0)
+        .unwrap()
+        .add_player(PlayerType::Local, 1)
+        .unwrap()
+        .start_p2p_session(socket)
+        .unwrap();
+
+    ActiveGame::new(session, 1)
 }
