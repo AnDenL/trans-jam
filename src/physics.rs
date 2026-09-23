@@ -1,4 +1,7 @@
-use crate::maps::{Map, TILE_SIZE, Tile};
+use crate::{
+    PLAYER_RADIUS,
+    maps::{Map, TILE_SIZE, Tile},
+};
 use macroquad::prelude::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -92,4 +95,94 @@ pub fn raycast_grid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option
     } else {
         None
     }
+}
+
+pub fn check_circle_hit(
+    origin: Vec2,
+    dir: Vec2,
+    max_dist: f32,
+    circle_pos: Vec2,
+    radius: f32,
+) -> Option<f32> {
+    let to_circle = circle_pos - origin;
+    if to_circle.length_squared() <= radius * radius {
+        return Some(0.0);
+    }
+    let proj = to_circle.dot(dir);
+    if proj <= 0.0 || proj >= max_dist {
+        return None;
+    }
+    let perp_sq = to_circle.length_squared() - proj * proj;
+    let hit_rad = radius + 6.0;
+    if perp_sq <= hit_rad * hit_rad {
+        Some(proj)
+    } else {
+        None
+    }
+}
+
+pub fn is_circle_colliding(pos: Vec2, radius: f32, map: &Map) -> bool {
+    let min_tx = ((pos.x - radius) / TILE_SIZE).floor() as i32;
+    let max_tx = ((pos.x + radius) / TILE_SIZE).floor() as i32;
+    let min_ty = ((pos.y - radius) / TILE_SIZE).floor() as i32;
+    let max_ty = ((pos.y + radius) / TILE_SIZE).floor() as i32;
+
+    for ty in min_ty..=max_ty {
+        for tx in min_tx..=max_tx {
+            if map.get(tx, ty) == Tile::Wall {
+                let tile_min_x = tx as f32 * TILE_SIZE;
+                let tile_max_x = (tx + 1) as f32 * TILE_SIZE;
+                let tile_min_y = ty as f32 * TILE_SIZE;
+                let tile_max_y = (ty + 1) as f32 * TILE_SIZE;
+
+                let closest_x = pos.x.clamp(tile_min_x, tile_max_x);
+                let closest_y = pos.y.clamp(tile_min_y, tile_max_y);
+
+                let dx = pos.x - closest_x;
+                let dy = pos.y - closest_y;
+                if dx * dx + dy * dy < radius * radius {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+pub enum ZipperResult {
+    Teleported(Vec2),
+    FellIntoVoid,
+    Failed,
+}
+
+pub fn calculate_zipper(origin: Vec2, dir: Vec2, map: &Map) -> ZipperResult {
+    let dir = dir.normalize();
+    let world_w = map.w as f32 * TILE_SIZE;
+    let world_h = map.h as f32 * TILE_SIZE;
+
+    let wall_hit = match raycast_grid(origin, dir, 200.0, map) {
+        Some(hit) => hit,
+        None => return ZipperResult::Failed,
+    };
+
+    let step_size = TILE_SIZE * 0.4;
+    let mut current_pos = wall_hit.point + dir * (PLAYER_RADIUS + 5.0);
+
+    for _ in 0..12 {
+        if current_pos.x <= PLAYER_RADIUS
+            || current_pos.x >= world_w - PLAYER_RADIUS
+            || current_pos.y <= PLAYER_RADIUS
+            || current_pos.y >= world_h - PLAYER_RADIUS
+        {
+            return ZipperResult::FellIntoVoid;
+        }
+
+        if !is_circle_colliding(current_pos, PLAYER_RADIUS, map) {
+            return ZipperResult::Teleported(current_pos);
+        }
+
+        current_pos += dir * step_size;
+    }
+
+    ZipperResult::Failed
 }

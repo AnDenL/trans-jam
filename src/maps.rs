@@ -1,5 +1,4 @@
 use macroquad::prelude::*;
-use std::fs;
 
 pub const TILE_SIZE: f32 = 120.0;
 
@@ -7,8 +6,39 @@ pub const TILE_SIZE: f32 = 120.0;
 pub enum Tile {
     Empty,
     Wall,
-    SpawnP1, // 1
-    SpawnP2, // 2
+    SpawnP1,
+    SpawnP2,
+}
+
+#[cfg(target_arch = "wasm32")]
+extern "C" {
+    fn download_file_js(name_ptr: *const u8, name_len: usize, data_ptr: *const u8, data_len: usize);
+}
+
+pub fn save_file_crossplatform(filename: &str, content: &str) {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        download_file_js(
+            filename.as_ptr(),
+            filename.len(),
+            content.as_ptr(),
+            content.len(),
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Err(e) = std::fs::write(filename, content) {
+            eprintln!("Error while writing file! {}: {}", filename, e);
+        } else {
+            println!("File succesfully downloaded: {}", filename);
+        }
+    }
+}
+
+pub fn load_default_map() -> Map {
+    const DEFAULT_MAP_DATA: &str = include_str!("../map.txt");
+    Map::from_string_repr(DEFAULT_MAP_DATA).unwrap_or_default()
 }
 
 #[derive(Clone, Debug)]
@@ -76,7 +106,6 @@ impl Map {
             }
         }
 
-        // Запасні варіанти, якщо на мапі забули поставити спавни
         if p1.is_empty() {
             p1.push(vec2(TILE_SIZE * 1.5, TILE_SIZE * 1.5));
         }
@@ -90,7 +119,7 @@ impl Map {
         (p1, p2)
     }
 
-    pub fn save(&self, path: &str) {
+    pub fn to_string_repr(&self) -> String {
         let mut s = format!("{} {}\n", self.w, self.h);
         for y in 0..self.h {
             for x in 0..self.w {
@@ -103,41 +132,56 @@ impl Map {
             }
             s.push('\n');
         }
-        if let Err(e) = fs::write(path, s) {
-            eprintln!("Couldn't save map: {}", e);
+        s
+    }
+
+    pub fn from_string_repr(content: &str) -> Option<Self> {
+        let mut lines = content.lines();
+        let header = lines.next()?;
+        let dims: Vec<usize> = header
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if dims.len() != 2 {
+            return None;
+        }
+
+        let (w, h) = (dims[0], dims[1]);
+        let mut tiles = Vec::with_capacity(w * h);
+
+        for line in lines {
+            for ch in line.chars() {
+                tiles.push(match ch {
+                    '#' => Tile::Wall,
+                    '1' => Tile::SpawnP1,
+                    '2' => Tile::SpawnP2,
+                    _ => Tile::Empty,
+                });
+            }
+        }
+
+        if tiles.len() == w * h {
+            Some(Self { w, h, tiles })
         } else {
-            println!("Map saved to {}", path);
+            None
         }
     }
 
+    pub fn save(&self, path: &str) {
+        let data = self.to_string_repr();
+        save_file_crossplatform(path, &data);
+    }
+
     pub fn load(path: &str) -> Self {
-        if let Ok(content) = fs::read_to_string(path) {
-            let mut lines = content.lines();
-            if let Some(header) = lines.next() {
-                let dims: Vec<usize> = header
-                    .split_whitespace()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
-                if dims.len() == 2 {
-                    let (w, h) = (dims[0], dims[1]);
-                    let mut tiles = Vec::with_capacity(w * h);
-                    for line in lines {
-                        for ch in line.chars() {
-                            tiles.push(match ch {
-                                '#' => Tile::Wall,
-                                '1' => Tile::SpawnP1,
-                                '2' => Tile::SpawnP2,
-                                _ => Tile::Empty,
-                            });
-                        }
-                    }
-                    if tiles.len() == w * h {
-                        return Self { w, h, tiles };
-                    }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                if let Some(map) = Self::from_string_repr(&content) {
+                    return map;
                 }
             }
         }
-        println!("Map '{}' not found or corrupted. Using default.", path);
-        Self::default()
+        println!("File '{}' not found, using default map.", path);
+        load_default_map()
     }
 }

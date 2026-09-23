@@ -5,10 +5,21 @@ use macroquad::{
 };
 use std::process::exit;
 
+use crate::game::ActiveGame;
 use crate::{
-    ActiveGame, FPS, GgrsConfig, State,
+    FPS, GgrsConfig,
     maps::{Map, TILE_SIZE, Tile},
+    render::draw_map,
 };
+
+pub enum State {
+    Menu,
+    Settings,
+    Host,
+    Join,
+    Editor,
+    Game(Box<ActiveGame>),
+}
 
 pub fn draw_menu(state: &mut State, username: &mut String) {
     widgets::InputText::new(hash!())
@@ -117,7 +128,7 @@ pub fn editor_loop(
     };
 
     set_camera(&camera);
-    crate::draw_map(map);
+    draw_map(map);
 
     let mouse_screen = mouse_position();
     let mouse_world = camera.screen_to_world(vec2(mouse_screen.0, mouse_screen.1));
