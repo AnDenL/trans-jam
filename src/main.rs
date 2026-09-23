@@ -4,6 +4,8 @@ use macroquad::prelude::*;
 use macroquad::rand;
 use serde::{Deserialize, Serialize};
 
+use crate::maps::{Map, TILE_SIZE, Tile};
+use crate::ui::editor_loop;
 use crate::{
     physics::raycast_grid,
     ui::{draw_host, draw_join, draw_menu, draw_settings},
@@ -14,6 +16,7 @@ mod physics;
 mod ui;
 
 pub const FPS: f64 = 60.0;
+pub const PLAYER_RADIUS: f32 = 38.0;
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -48,7 +51,7 @@ pub enum GameEvent {
     Explosion { pos: Vec2, color: Color },
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Clone, Default)]
 pub struct GameState {
     pub p1: Player,
     pub p2: Player,
@@ -82,7 +85,35 @@ fn check_circle_hit(
     }
 }
 
-fn apply_movement(pos: &mut Vec2, input: Input, speed: f32) {
+pub fn is_circle_colliding(pos: Vec2, radius: f32, map: &Map) -> bool {
+    let min_tx = ((pos.x - radius) / TILE_SIZE).floor() as i32;
+    let max_tx = ((pos.x + radius) / TILE_SIZE).floor() as i32;
+    let min_ty = ((pos.y - radius) / TILE_SIZE).floor() as i32;
+    let max_ty = ((pos.y + radius) / TILE_SIZE).floor() as i32;
+
+    for ty in min_ty..=max_ty {
+        for tx in min_tx..=max_tx {
+            if map.get(tx, ty) == Tile::Wall {
+                let tile_min_x = tx as f32 * TILE_SIZE;
+                let tile_max_x = (tx + 1) as f32 * TILE_SIZE;
+                let tile_min_y = ty as f32 * TILE_SIZE;
+                let tile_max_y = (ty + 1) as f32 * TILE_SIZE;
+
+                let closest_x = pos.x.clamp(tile_min_x, tile_max_x);
+                let closest_y = pos.y.clamp(tile_min_y, tile_max_y);
+
+                let dx = pos.x - closest_x;
+                let dy = pos.y - closest_y;
+                if dx * dx + dy * dy < radius * radius {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn apply_movement(pos: &mut Vec2, input: Input, speed: f32, map: &Map) {
     let mut move_x = 0.0;
     if input.contains(Input::LEFT) {
         move_x -= speed;
@@ -90,7 +121,7 @@ fn apply_movement(pos: &mut Vec2, input: Input, speed: f32) {
     if input.contains(Input::RIGHT) {
         move_x += speed;
     }
-    if move_x != 0.0 && !is_circle_colliding(vec2(pos.x + move_x, pos.y), PLAYER_RADIUS) {
+    if move_x != 0.0 && !is_circle_colliding(vec2(pos.x + move_x, pos.y), PLAYER_RADIUS, map) {
         pos.x += move_x;
     }
 
@@ -101,20 +132,20 @@ fn apply_movement(pos: &mut Vec2, input: Input, speed: f32) {
     if input.contains(Input::DOWN) {
         move_y -= speed;
     }
-    if move_y != 0.0 && !is_circle_colliding(vec2(pos.x, pos.y + move_y), PLAYER_RADIUS) {
+    if move_y != 0.0 && !is_circle_colliding(vec2(pos.x, pos.y + move_y), PLAYER_RADIUS, map) {
         pos.y += move_y;
     }
 }
 
-fn apply_teleport(pos: &mut Vec2, dir: Vec2, max_dist: f32) {
-    if let Some(hit) = raycast_grid(*pos, dir, max_dist, &MAP_TILES) {
+fn apply_teleport(pos: &mut Vec2, dir: Vec2, max_dist: f32, map: &Map) {
+    if let Some(hit) = raycast_grid(*pos, dir, max_dist, map) {
         let target = hit.point + hit.normal * (PLAYER_RADIUS + 2.0);
-        if !is_circle_colliding(target, PLAYER_RADIUS) {
+        if !is_circle_colliding(target, PLAYER_RADIUS, map) {
             *pos = target;
             return;
         }
         let target_fallback = hit.point - dir * (PLAYER_RADIUS + 2.0);
-        if !is_circle_colliding(target_fallback, PLAYER_RADIUS) {
+        if !is_circle_colliding(target_fallback, PLAYER_RADIUS, map) {
             *pos = target_fallback;
         }
     }
@@ -124,6 +155,11 @@ impl GameState {
     pub fn advance(&mut self, inputs: [(PlayerInput, ggrs::InputStatus); 2]) {
         self.events.clear();
 
+        let (p1_spawns, p2_spawns) = self.map.get_spawns();
+
+        let p1_spawn = p1_spawns[(self.score_p2 as usize) % p1_spawns.len()];
+        let p2_spawn = p2_spawns[(self.score_p1 as usize) % p2_spawns.len()];
+
         process_player(
             &mut self.p1,
             &mut self.p2,
@@ -132,7 +168,8 @@ impl GameState {
             &mut self.events,
             GOLD,
             SKYBLUE,
-            P2_SPAWN,
+            p2_spawn,
+            &self.map,
         );
 
         process_player(
@@ -143,7 +180,8 @@ impl GameState {
             &mut self.events,
             SKYBLUE,
             GOLD,
-            P1_SPAWN,
+            p1_spawn,
+            &self.map,
         );
     }
 }
@@ -157,6 +195,7 @@ fn process_player(
     my_color: Color,
     enemy_color: Color,
     enemy_spawn: Vec2,
+    map: &Map,
 ) {
     let speed = 9.0;
 
@@ -164,11 +203,11 @@ fn process_player(
         (input.aim_angle as f32 / 255.0) * (2.0 * std::f32::consts::PI) - std::f32::consts::PI;
     p_active.dir = vec2(rad.cos(), rad.sin());
 
-    apply_movement(&mut p_active.pos, input.buttons, speed);
+    apply_movement(&mut p_active.pos, input.buttons, speed, map);
 
     if input.buttons.contains(Input::HOOK) {
         let old_pos = p_active.pos;
-        apply_teleport(&mut p_active.pos, p_active.dir, 3000.0);
+        apply_teleport(&mut p_active.pos, p_active.dir, 3000.0, map);
 
         events.push(GameEvent::Blink {
             from: old_pos,
@@ -180,7 +219,7 @@ fn process_player(
     if input.buttons.contains(Input::FIRE) {
         let origin = p_active.pos;
         let dir = p_active.dir;
-        let wall_hit = raycast_grid(origin, dir, 3000.0, &MAP_TILES);
+        let wall_hit = raycast_grid(origin, dir, 3000.0, map);
         let max_dist = wall_hit.map(|h| h.distance).unwrap_or(3000.0);
 
         if let Some(hit_dist) = check_circle_hit(origin, dir, max_dist, p_enemy.pos, PLAYER_RADIUS)
@@ -188,6 +227,7 @@ fn process_player(
             *score += 1;
             let death_pos = p_enemy.pos;
             p_enemy.pos = enemy_spawn;
+
             events.push(GameEvent::Explosion {
                 pos: death_pos,
                 color: enemy_color,
@@ -228,6 +268,7 @@ pub struct VisualEffects {
     pub particles: Vec<Particle>,
     pub lasers: Vec<LaserBeam>,
     pub shake_trauma: f32,
+    pub cam_pos: Vec2,
 }
 
 impl VisualEffects {
@@ -337,28 +378,43 @@ pub struct ActiveGame {
 
 impl ActiveGame {
     pub fn new(session: P2PSession<GgrsConfig>, local_handle: usize) -> Self {
+        let loaded_map = Map::load("map.txt");
+        let (p1_spawns, p2_spawns) = loaded_map.get_spawns();
+        let p1_spawn = p1_spawns[0];
+        let p2_spawn = p2_spawns[0];
+        let my_spawn = if local_handle == 0 {
+            p1_spawn
+        } else {
+            p2_spawn
+        };
+
         Self {
             session,
             local_handle,
             state: GameState {
                 p1: Player {
-                    pos: P1_SPAWN,
+                    pos: p1_spawn,
                     dir: vec2(1.0, 0.0),
                 },
                 p2: Player {
-                    pos: P2_SPAWN,
+                    pos: p2_spawn,
                     dir: vec2(-1.0, 0.0),
                 },
                 score_p1: 0,
                 score_p2: 0,
                 events: Vec::new(),
+                map: loaded_map,
             },
-            effects: VisualEffects::default(),
+            effects: VisualEffects {
+                cam_pos: my_spawn,
+                ..Default::default()
+            },
         }
     }
 }
 
 pub struct GgrsConfig;
+
 impl ggrs::Config for GgrsConfig {
     type Input = PlayerInput;
     type InputPredictor = ggrs::PredictRepeatLast;
@@ -371,8 +427,9 @@ fn window_conf() -> Conf {
         window_title: "TransferJam".to_owned(),
         window_width: 1200,
         window_height: 800,
-        window_resizable: true,
+        window_resizable: false,
         high_dpi: true,
+        sample_count: 4,
         ..Default::default()
     }
 }
@@ -382,6 +439,7 @@ pub enum State {
     Settings,
     Host,
     Join,
+    Editor,
     Game(Box<ActiveGame>),
 }
 
@@ -394,6 +452,14 @@ async fn main() {
     let mut port = "7575".to_owned();
     let mut address = "127.0.0.1".to_owned();
 
+    let mut global_map = Map::load("map.txt");
+    let mut editor_cam = vec2(
+        global_map.w as f32 * TILE_SIZE * 0.5,
+        global_map.h as f32 * TILE_SIZE * 0.5,
+    );
+    let mut editor_map_name = "map.txt".to_string();
+    let mut editor_selected_tile = Tile::Wall;
+
     loop {
         clear_background(bg);
 
@@ -402,6 +468,13 @@ async fn main() {
             State::Settings => draw_settings(&mut state),
             State::Host => draw_host(&mut state, &mut username, &mut port),
             State::Join => draw_join(&mut state, &mut username, &mut port, &mut address),
+            State::Editor => editor_loop(
+                &mut state,
+                &mut global_map,
+                &mut editor_cam,
+                &mut editor_map_name,
+                &mut editor_selected_tile,
+            ),
             State::Game(ref mut game) => game_loop(game),
         }
 
@@ -413,12 +486,21 @@ fn game_loop(game: &mut ActiveGame) {
     let dt = get_frame_time();
     game.effects.update(dt);
 
-    let world_w = MAP_W as f32 * TILE_SIZE;
-    let world_h = MAP_H as f32 * TILE_SIZE;
+    let my_player = match game.local_handle {
+        0 => &game.state.p1,
+        1 => &game.state.p2,
+        _ => panic!(),
+    };
+
+    let target_cam = my_player.pos + game.effects.shake_offset();
+    game.effects.cam_pos = game.effects.cam_pos.lerp(target_cam, 10.0 * dt);
+
+    let view_width = 3600.0;
+    let view_height = view_width * (screen_height() / screen_width());
 
     let camera = Camera2D {
-        target: vec2(world_w * 0.5, world_h * 0.5) + game.effects.shake_offset(),
-        zoom: vec2(2.0 / world_w, -2.0 / world_h),
+        target: game.effects.cam_pos,
+        zoom: vec2(2.0 / view_width, -2.0 / view_height),
         ..Default::default()
     };
 
@@ -439,19 +521,12 @@ fn game_loop(game: &mut ActiveGame) {
         if is_key_down(KeyCode::S) {
             input |= Input::DOWN;
         }
-
         if is_key_pressed(KeyCode::Space) {
             input |= Input::HOOK;
         }
         if is_mouse_button_pressed(MouseButton::Left) {
             input |= Input::FIRE;
         }
-
-        let my_player = match game.local_handle {
-            0 => &game.state.p1,
-            1 => &game.state.p2,
-            _ => panic!(),
-        };
 
         let mouse_screen = mouse_position();
         let mouse_world = camera.screen_to_world(vec2(mouse_screen.0, mouse_screen.1));
@@ -493,7 +568,7 @@ fn game_loop(game: &mut ActiveGame) {
     }
 
     set_camera(&camera);
-    draw_map();
+    draw_map(&game.state.map);
 
     for laser in &game.effects.lasers {
         let alpha = (laser.lifetime / 0.12).clamp(0.0, 1.0);
@@ -575,80 +650,101 @@ fn draw_drone(pos: Vec2, dir: Vec2, color: Color) {
     draw_circle(eye_pos.x + dir.x * 2.0, eye_pos.y + dir.y * 2.0, 4.5, RED);
 }
 
-#[inline(always)]
-pub fn is_wall(x: i32, y: i32) -> bool {
-    if x < 0 || x >= MAP_W as i32 || y < 0 || y >= MAP_H as i32 {
-        return true;
-    }
-    MAP_TILES[y as usize * MAP_W + x as usize]
-}
-
-pub fn is_circle_colliding(pos: Vec2, radius: f32) -> bool {
-    let min_tx = ((pos.x - radius) / TILE_SIZE).floor() as i32;
-    let max_tx = ((pos.x + radius) / TILE_SIZE).floor() as i32;
-    let min_ty = ((pos.y - radius) / TILE_SIZE).floor() as i32;
-    let max_ty = ((pos.y + radius) / TILE_SIZE).floor() as i32;
-
-    for ty in min_ty..=max_ty {
-        for tx in min_tx..=max_tx {
-            if is_wall(tx, ty) {
-                let tile_min_x = tx as f32 * TILE_SIZE;
-                let tile_max_x = (tx + 1) as f32 * TILE_SIZE;
-                let tile_min_y = ty as f32 * TILE_SIZE;
-                let tile_max_y = (ty + 1) as f32 * TILE_SIZE;
-
-                let closest_x = pos.x.clamp(tile_min_x, tile_max_x);
-                let closest_y = pos.y.clamp(tile_min_y, tile_max_y);
-
-                let dx = pos.x - closest_x;
-                let dy = pos.y - closest_y;
-                if dx * dx + dy * dy < radius * radius {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-pub fn draw_map() {
-    for y in 0..MAP_H {
-        for x in 0..MAP_W {
+pub fn draw_map(map: &Map) {
+    for y in 0..map.h {
+        for x in 0..map.w {
             let px = x as f32 * TILE_SIZE;
             let py = y as f32 * TILE_SIZE;
 
-            if MAP_TILES[y * MAP_W + x] {
-                draw_rectangle(
-                    px,
-                    py,
-                    TILE_SIZE,
-                    TILE_SIZE,
-                    Color::new(0.12, 0.15, 0.2, 1.0),
-                );
-                draw_rectangle_lines(
-                    px,
-                    py,
-                    TILE_SIZE,
-                    TILE_SIZE,
-                    1.5,
-                    Color::new(0.25, 0.35, 0.45, 1.0),
-                );
-            } else {
-                draw_rectangle(
-                    px,
-                    py,
-                    TILE_SIZE,
-                    TILE_SIZE,
-                    Color::new(0.04, 0.05, 0.08, 1.0),
-                );
-                draw_rectangle_lines(
-                    px,
-                    py,
-                    TILE_SIZE,
-                    TILE_SIZE,
-                    1.0,
-                    Color::new(0.07, 0.09, 0.13, 1.0),
-                );
+            match map.get(x as i32, y as i32) {
+                Tile::Wall => {
+                    draw_rectangle(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        Color::new(0.12, 0.15, 0.2, 1.0),
+                    );
+                    draw_rectangle_lines(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        3.,
+                        Color::new(0.25, 0.35, 0.45, 1.0),
+                    );
+                }
+                Tile::Empty => {
+                    draw_rectangle(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        Color::new(0.04, 0.05, 0.08, 1.0),
+                    );
+                    draw_rectangle_lines(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        1.0,
+                        Color::new(0.07, 0.09, 0.13, 1.0),
+                    );
+                }
+                Tile::SpawnP1 => {
+                    draw_rectangle(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        Color::new(0.04, 0.05, 0.08, 1.0),
+                    );
+                    draw_rectangle_lines(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        1.0,
+                        Color::new(0.07, 0.09, 0.13, 1.0),
+                    );
+                    draw_circle(
+                        px + TILE_SIZE * 0.5,
+                        py + TILE_SIZE * 0.5,
+                        25.0,
+                        Color::new(1.0, 0.84, 0.0, 0.15),
+                    );
+                    draw_circle_lines(px + TILE_SIZE * 0.5, py + TILE_SIZE * 0.5, 25.0, 2.0, GOLD);
+                }
+                Tile::SpawnP2 => {
+                    draw_rectangle(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        Color::new(0.04, 0.05, 0.08, 1.0),
+                    );
+                    draw_rectangle_lines(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        1.0,
+                        Color::new(0.07, 0.09, 0.13, 1.0),
+                    );
+                    draw_circle(
+                        px + TILE_SIZE * 0.5,
+                        py + TILE_SIZE * 0.5,
+                        25.0,
+                        Color::new(0.53, 0.81, 0.92, 0.15),
+                    );
+                    draw_circle_lines(
+                        px + TILE_SIZE * 0.5,
+                        py + TILE_SIZE * 0.5,
+                        25.0,
+                        2.0,
+                        SKYBLUE,
+                    );
+                }
             }
         }
     }

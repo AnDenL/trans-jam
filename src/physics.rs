@@ -1,4 +1,4 @@
-use crate::maps::{Map, Tile};
+use crate::maps::{Map, TILE_SIZE, Tile};
 use macroquad::prelude::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -67,14 +67,16 @@ pub fn raycast_grid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option
             break;
         }
 
-        if map_x < 0 || map_x >= MAP_W as i32 || map_y < 0 || map_y >= MAP_H as i32 {
+        if map_x < 0 || map_x >= map.w as i32 || map_y < 0 || map_y >= map.h as i32 {
             hit = true;
+            hit_tile = Tile::Wall;
             break;
         }
 
-        let idx = map_y as usize * MAP_W + map_x as usize;
-        if map[idx] {
+        let tile = map.get(map_x, map_y);
+        if tile == Tile::Wall {
             hit = true;
+            hit_tile = tile;
             break;
         }
     }
@@ -84,7 +86,8 @@ pub fn raycast_grid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option
             point: origin + dir * dist,
             normal: hit_normal,
             distance: dist,
-            tile_coord: (map_x, map_y),
+            tile_coord: (map_x as usize, map_y as usize),
+            tile_type: hit_tile,
         })
     } else {
         None
