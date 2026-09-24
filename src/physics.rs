@@ -18,7 +18,6 @@ pub fn raycast_grid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option
         return None;
     }
     let dir = dir.normalize();
-
     let mut map_x = (origin.x / TILE_SIZE).floor() as i32;
     let mut map_y = (origin.y / TILE_SIZE).floor() as i32;
 
@@ -41,7 +40,6 @@ pub fn raycast_grid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option
     } else {
         ((map_x + 1) as f32 * TILE_SIZE - origin.x) / dir.x.abs()
     };
-
     let mut side_dist_y = if dir.y < 0.0 {
         (origin.y - map_y as f32 * TILE_SIZE) / dir.y.abs()
     } else {
@@ -77,7 +75,7 @@ pub fn raycast_grid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option
         }
 
         let tile = map.get(map_x, map_y);
-        if tile == Tile::Wall {
+        if tile == Tile::Wall || tile == Tile::BreakableWall {
             hit = true;
             hit_tile = tile;
             break;
@@ -121,7 +119,7 @@ pub fn check_circle_hit(
     }
 }
 
-pub fn is_circle_colliding(pos: Vec2, radius: f32, map: &Map) -> bool {
+pub fn is_circle_colliding(pos: Vec2, radius: f32, map: &Map, ignore_breakable: bool) -> bool {
     let min_tx = ((pos.x - radius) / TILE_SIZE).floor() as i32;
     let max_tx = ((pos.x + radius) / TILE_SIZE).floor() as i32;
     let min_ty = ((pos.y - radius) / TILE_SIZE).floor() as i32;
@@ -129,7 +127,14 @@ pub fn is_circle_colliding(pos: Vec2, radius: f32, map: &Map) -> bool {
 
     for ty in min_ty..=max_ty {
         for tx in min_tx..=max_tx {
-            if map.get(tx, ty) == Tile::Wall {
+            let tile = map.get(tx, ty);
+            let is_solid = if ignore_breakable {
+                tile == Tile::Wall
+            } else {
+                tile == Tile::Wall || tile == Tile::BreakableWall
+            };
+
+            if is_solid {
                 let tile_min_x = tx as f32 * TILE_SIZE;
                 let tile_max_x = (tx + 1) as f32 * TILE_SIZE;
                 let tile_min_y = ty as f32 * TILE_SIZE;
@@ -140,13 +145,83 @@ pub fn is_circle_colliding(pos: Vec2, radius: f32, map: &Map) -> bool {
 
                 let dx = pos.x - closest_x;
                 let dy = pos.y - closest_y;
-                if dx * dx + dy * dy < radius * radius {
+
+                if dx * dx + dy * dy < (radius - 0.15) * (radius - 0.15) {
                     return true;
                 }
             }
         }
     }
     false
+}
+
+pub fn resolve_circle_collision(pos: &mut Vec2, radius: f32, map: &Map, ignore_breakable: bool) {
+    for _ in 0..4 {
+        let min_tx = ((pos.x - radius) / TILE_SIZE).floor() as i32;
+        let max_tx = ((pos.x + radius) / TILE_SIZE).floor() as i32;
+        let min_ty = ((pos.y - radius) / TILE_SIZE).floor() as i32;
+        let max_ty = ((pos.y + radius) / TILE_SIZE).floor() as i32;
+
+        let mut max_pen = 0.0f32;
+        let mut best_push = Vec2::ZERO;
+
+        for ty in min_ty..=max_ty {
+            for tx in min_tx..=max_tx {
+                let tile = map.get(tx, ty);
+                let is_solid = if ignore_breakable {
+                    tile == Tile::Wall
+                } else {
+                    tile == Tile::Wall || tile == Tile::BreakableWall
+                };
+
+                if is_solid {
+                    let tile_min = vec2(tx as f32 * TILE_SIZE, ty as f32 * TILE_SIZE);
+                    let tile_max = tile_min + vec2(TILE_SIZE, TILE_SIZE);
+
+                    let closest = vec2(
+                        pos.x.clamp(tile_min.x, tile_max.x),
+                        pos.y.clamp(tile_min.y, tile_max.y),
+                    );
+
+                    let diff = *pos - closest;
+                    let dist_sq = diff.length_squared();
+
+                    if dist_sq < radius * radius {
+                        let dist = dist_sq.sqrt();
+                        let (normal, pen) = if dist > 0.0001 {
+                            (diff / dist, radius - dist)
+                        } else {
+                            let dl = pos.x - tile_min.x;
+                            let dr = tile_max.x - pos.x;
+                            let db = pos.y - tile_min.y;
+                            let dt = tile_max.y - pos.y;
+                            let min_d = dl.min(dr).min(db).min(dt);
+                            if min_d == dl {
+                                (vec2(-1.0, 0.0), radius + dl)
+                            } else if min_d == dr {
+                                (vec2(1.0, 0.0), radius + dr)
+                            } else if min_d == db {
+                                (vec2(0.0, -1.0), radius + db)
+                            } else {
+                                (vec2(0.0, 1.0), radius + dt)
+                            }
+                        };
+
+                        if pen > max_pen {
+                            max_pen = pen;
+                            best_push = normal * pen;
+                        }
+                    }
+                }
+            }
+        }
+
+        if max_pen > 0.001 {
+            *pos += best_push * 1.03;
+        } else {
+            break;
+        }
+    }
 }
 
 pub enum ZipperResult {
@@ -156,19 +231,22 @@ pub enum ZipperResult {
 }
 
 pub fn calculate_zipper(origin: Vec2, dir: Vec2, map: &Map) -> ZipperResult {
+    if dir.length_squared() < 0.0001 {
+        return ZipperResult::Failed;
+    }
     let dir = dir.normalize();
     let world_w = map.w as f32 * TILE_SIZE;
     let world_h = map.h as f32 * TILE_SIZE;
 
-    let wall_hit = match raycast_grid(origin, dir, 200.0, map) {
+    let wall_hit = match raycast_grid(origin, dir, 400.0, map) {
         Some(hit) => hit,
         None => return ZipperResult::Failed,
     };
 
-    let step_size = TILE_SIZE * 0.4;
-    let mut current_pos = wall_hit.point + dir * (PLAYER_RADIUS + 5.0);
+    let step_size = 24.0;
+    let mut current_pos = wall_hit.point + dir * (PLAYER_RADIUS + 10.0);
 
-    for _ in 0..12 {
+    for _ in 0..32 {
         if current_pos.x <= PLAYER_RADIUS
             || current_pos.x >= world_w - PLAYER_RADIUS
             || current_pos.y <= PLAYER_RADIUS
@@ -177,7 +255,7 @@ pub fn calculate_zipper(origin: Vec2, dir: Vec2, map: &Map) -> ZipperResult {
             return ZipperResult::FellIntoVoid;
         }
 
-        if !is_circle_colliding(current_pos, PLAYER_RADIUS, map) {
+        if !is_circle_colliding(current_pos, PLAYER_RADIUS, map, false) {
             return ZipperResult::Teleported(current_pos);
         }
 

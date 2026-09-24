@@ -6,6 +6,7 @@ pub const TILE_SIZE: f32 = 120.0;
 pub enum Tile {
     Empty,
     Wall,
+    BreakableWall,
     SpawnP1,
     SpawnP2,
 }
@@ -126,6 +127,7 @@ impl Map {
                 s.push(match self.tiles[y * self.w + x] {
                     Tile::Wall => '#',
                     Tile::Empty => '.',
+                    Tile::BreakableWall => '=',
                     Tile::SpawnP1 => '1',
                     Tile::SpawnP2 => '2',
                 });
@@ -153,6 +155,7 @@ impl Map {
             for ch in line.chars() {
                 tiles.push(match ch {
                     '#' => Tile::Wall,
+                    '=' => Tile::BreakableWall,
                     '1' => Tile::SpawnP1,
                     '2' => Tile::SpawnP2,
                     _ => Tile::Empty,

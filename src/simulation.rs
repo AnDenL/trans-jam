@@ -1,46 +1,56 @@
-use bitflags::bitflags;
 use macroquad::prelude::*;
-use serde::{Deserialize, Serialize};
 
-use crate::{PLAYER_RADIUS, maps::Map, physics::*};
+use crate::{
+    PLAYER_RADIUS,
+    maps::{Map, TILE_SIZE, Tile},
+    physics::*,
+    player::{Player, PlayerInput, kill_enemy, process_player},
+};
 
-bitflags! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-    pub struct Input: u8 {
-        const UP       = 1 << 0;
-        const DOWN     = 1 << 1;
-        const LEFT     = 1 << 2;
-        const RIGHT    = 1 << 3;
-        const PARRY    = 1 << 4;
-        const FIRE     = 1 << 5;
-        const UTIL  = 1 << 6;
-        const MOVE     = 1 << 7;
-    }
-}
+pub struct GgrsConfig;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct PlayerInput {
-    pub buttons: Input,
-    pub aim_angle: u8,
-}
-
-#[derive(Default, Clone)]
-pub struct Player {
-    pub pos: Vec2,
-    pub dir: Vec2,
-    pub weapon: Weapon,
-    pub movement: Movement,
-    pub util: Utillity,
+impl ggrs::Config for GgrsConfig {
+    type Input = PlayerInput;
+    type InputPredictor = ggrs::PredictRepeatLast;
+    type State = GameState;
+    type Address = std::net::SocketAddr;
 }
 
 #[derive(Clone, Debug)]
 pub enum GameEvent {
-    Laser { from: Vec2, to: Vec2, color: Color },
-    Blink { from: Vec2, to: Vec2, color: Color },
-    Explosion { pos: Vec2, color: Color },
-    UsbDrop { pos: Vec2, color: Color },
-    UsbRecall { from: Vec2, to: Vec2, color: Color },
-    Zipper { from: Vec2, to: Vec2, color: Color },
+    Laser {
+        from: Vec2,
+        to: Vec2,
+        color: Color,
+    },
+    Blink {
+        from: Vec2,
+        to: Vec2,
+        color: Color,
+    },
+    Explosion {
+        pos: Vec2,
+        color: Color,
+    },
+    Shockwave {
+        pos: Vec2,
+        radius: f32,
+        color: Color,
+    },
+    UsbDrop {
+        pos: Vec2,
+        color: Color,
+    },
+    UsbRecall {
+        from: Vec2,
+        to: Vec2,
+        color: Color,
+    },
+    Zipper {
+        from: Vec2,
+        to: Vec2,
+        color: Color,
+    },
 }
 
 #[derive(Clone, Default)]
@@ -52,6 +62,49 @@ pub struct GameState {
     pub events: Vec<GameEvent>,
     pub map: Map,
     pub rng_seed: u64,
+    pub frame_count: i32,
+}
+
+impl GameState {
+    pub fn advance(&mut self, inputs: [(PlayerInput, ggrs::InputStatus); 2]) {
+        self.events.clear();
+        self.frame_count += 1;
+
+        let (p1_spawns, p2_spawns) = self.map.get_spawns();
+
+        let p1_spawn = p1_spawns[(self.score_p2 as usize) % p1_spawns.len()];
+        let p2_spawn = p2_spawns[(self.score_p1 as usize) % p2_spawns.len()];
+
+        process_player(
+            &mut self.p1,
+            &mut self.p2,
+            &mut self.score_p1,
+            &mut self.score_p2,
+            inputs[0].0,
+            &mut self.events,
+            GOLD,
+            SKYBLUE,
+            p1_spawn,
+            p2_spawn,
+            &mut self.map,
+            &mut self.rng_seed,
+        );
+
+        process_player(
+            &mut self.p2,
+            &mut self.p1,
+            &mut self.score_p2,
+            &mut self.score_p1,
+            inputs[1].0,
+            &mut self.events,
+            SKYBLUE,
+            GOLD,
+            p2_spawn,
+            p1_spawn,
+            &mut self.map,
+            &mut self.rng_seed,
+        );
+    }
 }
 
 pub fn xorshift64(state: &mut u64) -> u64 {
@@ -72,7 +125,9 @@ pub enum Weapon {
     Railgun,
     Shotgun,
     Piercing,
-    Remote,
+    WhiteOut,
+    NailFile,
+    Stomp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -85,21 +140,25 @@ pub enum Movement {
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum Utillity {
     #[default]
+    None,
     Parry,
+    ZaWarudo,
     Usb(Option<Vec2>),
 }
 
 pub fn roll_weapon(rng: &mut u64) -> Weapon {
-    match xorshift64(rng) % 4 {
+    match xorshift64(rng) % 6 {
         0 => Weapon::Railgun,
         1 => Weapon::Shotgun,
-        2 => Weapon::Remote,
-        _ => Weapon::Piercing,
+        2 => Weapon::Piercing,
+        3 => Weapon::WhiteOut,
+        4 => Weapon::Stomp,
+        _ => Weapon::NailFile,
     }
 }
 
 pub fn roll_movement(rng: &mut u64) -> Movement {
-    match xorshift64(rng) % 3 {
+    match xorshift64(rng) % 2 {
         0 => Movement::Zipper,
         _ => Movement::Hook,
     }
@@ -108,27 +167,50 @@ pub fn roll_movement(rng: &mut u64) -> Movement {
 pub fn roll_util(rng: &mut u64) -> Utillity {
     match xorshift64(rng) % 3 {
         0 => Utillity::Usb(None),
+        1 => Utillity::ZaWarudo,
         _ => Utillity::Parry,
     }
 }
 
-fn fire_ray(
+pub fn fire_ray(
     origin: Vec2,
     dir: Vec2,
     max_range: f32,
+    p_active: &mut Player,
     p_enemy: &mut Player,
     score: &mut u32,
+    enemy_score: &mut u32,
+    my_spawn: Vec2,
     enemy_spawn: Vec2,
     events: &mut Vec<GameEvent>,
     my_color: Color,
     enemy_color: Color,
-    map: &Map,
+    map: &mut Map,
     rng: &mut u64,
 ) {
     let wall_hit = raycast_grid(origin, dir, max_range, map);
     let limit = wall_hit.map(|h| h.distance).unwrap_or(max_range);
 
     if let Some(hit_dist) = check_circle_hit(origin, dir, limit, p_enemy.pos, PLAYER_RADIUS) {
+        if p_enemy.parry_timer > 0 {
+            kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+            events.push(GameEvent::Laser {
+                from: origin,
+                to: p_enemy.pos,
+                color: enemy_color,
+            });
+            events.push(GameEvent::Shockwave {
+                pos: p_enemy.pos,
+                radius: 160.0,
+                color: GOLD,
+            });
+            events.push(GameEvent::Explosion {
+                pos: p_enemy.pos,
+                color: WHITE,
+            });
+            return;
+        }
+
         kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
         events.push(GameEvent::Laser {
             from: origin,
@@ -141,180 +223,81 @@ fn fire_ray(
             to: origin + dir * limit,
             color: my_color,
         });
-    }
-}
 
-fn kill_enemy(
-    p_enemy: &mut Player,
-    score: &mut u32,
-    enemy_spawn: Vec2,
-    events: &mut Vec<GameEvent>,
-    enemy_color: Color,
-    rng: &mut u64,
-) {
-    *score += 1;
-    let death_pos = p_enemy.pos;
-    p_enemy.pos = enemy_spawn;
-    p_enemy.weapon = roll_weapon(rng);
-    p_enemy.movement = roll_movement(rng);
-    p_enemy.util = roll_util(rng);
-
-    events.push(GameEvent::Explosion {
-        pos: death_pos,
-        color: enemy_color,
-    });
-}
-
-fn apply_movement(pos: &mut Vec2, input: Input, speed: f32, map: &Map) {
-    let mut move_x = 0.0;
-    if input.contains(Input::LEFT) {
-        move_x -= speed;
-    }
-    if input.contains(Input::RIGHT) {
-        move_x += speed;
-    }
-    if move_x != 0.0 && !is_circle_colliding(vec2(pos.x + move_x, pos.y), PLAYER_RADIUS, map) {
-        pos.x += move_x;
-    }
-
-    let mut move_y = 0.0;
-    if input.contains(Input::UP) {
-        move_y += speed;
-    }
-    if input.contains(Input::DOWN) {
-        move_y -= speed;
-    }
-    if move_y != 0.0 && !is_circle_colliding(vec2(pos.x, pos.y + move_y), PLAYER_RADIUS, map) {
-        pos.y += move_y;
-    }
-}
-
-fn apply_teleport(pos: &mut Vec2, dir: Vec2, max_dist: f32, map: &Map) {
-    if let Some(hit) = raycast_grid(*pos, dir, max_dist, map) {
-        let target = hit.point + hit.normal * (PLAYER_RADIUS + 2.0);
-        if !is_circle_colliding(target, PLAYER_RADIUS, map) {
-            *pos = target;
-            return;
-        }
-        let target_fallback = hit.point - dir * (PLAYER_RADIUS + 2.0);
-        if !is_circle_colliding(target_fallback, PLAYER_RADIUS, map) {
-            *pos = target_fallback;
+        if let Some(hit) = wall_hit {
+            if hit.tile_type == Tile::BreakableWall {
+                map.set(
+                    hit.tile_coord.0 as i32,
+                    hit.tile_coord.1 as i32,
+                    Tile::Empty,
+                );
+                events.push(GameEvent::Explosion {
+                    pos: hit.point,
+                    color: WHITE,
+                });
+                events.push(GameEvent::Shockwave {
+                    pos: hit.point,
+                    radius: 80.0,
+                    color: LIGHTGRAY,
+                });
+            }
         }
     }
 }
 
-impl GameState {
-    pub fn advance(&mut self, inputs: [(PlayerInput, ggrs::InputStatus); 2]) {
-        self.events.clear();
-
-        let (p1_spawns, p2_spawns) = self.map.get_spawns();
-
-        let p1_spawn = p1_spawns[(self.score_p2 as usize) % p1_spawns.len()];
-        let p2_spawn = p2_spawns[(self.score_p1 as usize) % p2_spawns.len()];
-
-        process_player(
-            &mut self.p1,
-            &mut self.p2,
-            &mut self.score_p1,
-            &mut self.score_p2,
-            inputs[0].0,
-            &mut self.events,
-            GOLD,
-            SKYBLUE,
-            p1_spawn,
-            p2_spawn,
-            &self.map,
-            &mut self.rng_seed,
-        );
-
-        process_player(
-            &mut self.p2,
-            &mut self.p1,
-            &mut self.score_p2,
-            &mut self.score_p1,
-            inputs[1].0,
-            &mut self.events,
-            SKYBLUE,
-            GOLD,
-            p2_spawn,
-            p1_spawn,
-            &self.map,
-            &mut self.rng_seed,
-        );
-    }
-}
-
-fn process_player(
+pub fn execute_weapon(
+    weapon: Weapon,
     p_active: &mut Player,
     p_enemy: &mut Player,
     score: &mut u32,
     enemy_score: &mut u32,
-    input: PlayerInput,
+    my_spawn: Vec2,
+    enemy_spawn: Vec2,
     events: &mut Vec<GameEvent>,
     my_color: Color,
     enemy_color: Color,
-    my_spawn: Vec2,
-    enemy_spawn: Vec2,
-    map: &Map,
+    map: &mut Map,
     rng: &mut u64,
 ) {
-    let speed = 9.0;
+    let origin = p_active.pos;
+    let dir = p_active.dir;
 
-    let rad =
-        (input.aim_angle as f32 / 255.0) * (2.0 * std::f32::consts::PI) - std::f32::consts::PI;
-    p_active.dir = vec2(rad.cos(), rad.sin());
-
-    apply_movement(&mut p_active.pos, input.buttons, speed, map);
-
-    if input.buttons.contains(Input::MOVE) {
-        let origin = p_active.pos;
-        let dir = p_active.dir;
-
-        match p_active.movement {
-            Movement::Hook => {
-                let old_pos = p_active.pos;
-                apply_teleport(&mut p_active.pos, p_active.dir, 1500.0, map);
-
-                events.push(GameEvent::Blink {
-                    from: old_pos,
-                    to: p_active.pos,
-                    color: my_color,
-                });
-            }
-            Movement::Zipper => match crate::physics::calculate_zipper(origin, dir, map) {
-                crate::physics::ZipperResult::Teleported(target) => {
-                    p_active.pos = target;
-                    events.push(GameEvent::Zipper {
-                        from: origin,
-                        to: target,
-                        color: my_color,
-                    });
-                }
-                crate::physics::ZipperResult::FellIntoVoid => {
-                    *enemy_score += 1;
-                    let death_pos = origin;
-                    p_active.pos = my_spawn;
-                    events.push(GameEvent::Explosion {
-                        pos: death_pos,
-                        color: DARKGRAY,
-                    });
-                }
-                crate::physics::ZipperResult::Failed => {}
-            },
+    match weapon {
+        Weapon::Railgun => {
+            fire_ray(
+                origin,
+                dir,
+                3000.0,
+                p_active,
+                p_enemy,
+                score,
+                enemy_score,
+                my_spawn,
+                enemy_spawn,
+                events,
+                my_color,
+                enemy_color,
+                map,
+                rng,
+            );
         }
-    }
 
-    if input.buttons.contains(Input::FIRE) {
-        let origin = p_active.pos;
+        Weapon::Shotgun => {
+            let base_angle = dir.y.atan2(dir.x);
+            let spreads = [-0.22, -0.11, 0.0, 0.11, 0.22];
 
-        match p_active.weapon {
-            Weapon::Railgun => {
+            for offset in spreads {
+                let angle = base_angle + offset;
+                let spread_dir = vec2(angle.cos(), angle.sin());
                 fire_ray(
                     origin,
-                    p_active.dir,
-                    3000.0,
+                    spread_dir,
+                    1000.0,
+                    p_active,
                     p_enemy,
                     score,
+                    enemy_score,
+                    my_spawn,
                     enemy_spawn,
                     events,
                     my_color,
@@ -323,113 +306,235 @@ fn process_player(
                     rng,
                 );
             }
+        }
 
-            Weapon::Shotgun => {
-                let base_angle = p_active.dir.y.atan2(p_active.dir.x);
-                let spreads = [-0.22, -0.11, 0.0, 0.11, 0.22];
+        Weapon::Piercing => {
+            let max_dist = 4000.0;
 
-                for offset in spreads {
-                    let angle = base_angle + offset;
-                    let dir = vec2(angle.cos(), angle.sin());
-                    fire_ray(
-                        origin,
-                        dir,
-                        1300.0,
-                        p_enemy,
-                        score,
-                        enemy_spawn,
-                        events,
-                        my_color,
-                        enemy_color,
-                        map,
-                        rng,
+            if let Some(hit) = raycast_grid(origin, dir, max_dist, map) {
+                events.push(GameEvent::Laser {
+                    from: origin,
+                    to: hit.point,
+                    color: Color::new(0.05, 0.05, 0.3, 1.0),
+                });
+
+                if hit.tile_type == Tile::BreakableWall {
+                    map.set(
+                        hit.tile_coord.0 as i32,
+                        hit.tile_coord.1 as i32,
+                        Tile::Empty,
                     );
+                    events.push(GameEvent::Explosion {
+                        pos: hit.point,
+                        color: WHITE,
+                    });
+                    events.push(GameEvent::Shockwave {
+                        pos: hit.point,
+                        radius: 80.0,
+                        color: Color::new(1.0, 0.2, 0.8, 1.0),
+                    });
                 }
-            }
-
-            Weapon::Piercing => {
-                let dir = p_active.dir;
-                let max_dist = 4000.0;
 
                 if let Some(hit_dist) =
-                    check_circle_hit(origin, dir, max_dist, p_enemy.pos, PLAYER_RADIUS)
+                    check_circle_hit(hit.point, dir, max_dist, p_enemy.pos, PLAYER_RADIUS)
                 {
+                    if p_enemy.parry_timer > 0 {
+                        kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+                        events.push(GameEvent::Shockwave {
+                            pos: p_enemy.pos,
+                            radius: 160.0,
+                            color: GOLD,
+                        });
+                        return;
+                    }
+
                     kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
                     events.push(GameEvent::Laser {
-                        from: origin,
-                        to: origin + dir * hit_dist,
+                        from: hit.point,
+                        to: hit.point + dir * hit_dist,
                         color: Color::new(1.0, 0.2, 0.8, 1.0),
                     });
                 } else {
                     events.push(GameEvent::Laser {
-                        from: origin,
-                        to: origin + dir * max_dist,
+                        from: hit.point,
+                        to: hit.point + dir * max_dist,
                         color: Color::new(1.0, 0.2, 0.8, 1.0),
                     });
                 }
             }
-            Weapon::Remote => {
-                let dir = p_active.dir;
-                let max_dist = 4000.0;
-                let wall_hit = raycast_grid(origin, dir, max_dist, map);
-                let limit = wall_hit.map(|h| h.distance).unwrap_or(max_dist);
+        }
+        Weapon::WhiteOut => {
+            let max_place_dist = 560.0;
 
-                if let Some(_) = check_circle_hit(origin, dir, limit, p_enemy.pos, PLAYER_RADIUS) {
-                    let temp = p_active.pos;
-                    p_active.pos = p_enemy.pos;
-                    p_enemy.pos = temp;
+            fire_ray(
+                origin,
+                dir,
+                max_place_dist,
+                p_active,
+                p_enemy,
+                score,
+                enemy_score,
+                my_spawn,
+                enemy_spawn,
+                events,
+                my_color,
+                enemy_color,
+                map,
+                rng,
+            );
 
-                    events.push(GameEvent::Blink {
-                        from: origin,
-                        to: p_enemy.pos,
-                        color: my_color,
+            let hit = raycast_grid(origin, dir, max_place_dist, map);
+            let target_point = match hit {
+                Some(h) => h.point - dir * (TILE_SIZE * 0.4),
+                None => origin + dir * max_place_dist,
+            };
+
+            let tx = (target_point.x / TILE_SIZE).floor() as i32;
+            let ty = (target_point.y / TILE_SIZE).floor() as i32;
+
+            if map.get(tx, ty) == Tile::Empty {
+                let tile_center = vec2(
+                    tx as f32 * TILE_SIZE + TILE_SIZE * 0.5,
+                    ty as f32 * TILE_SIZE + TILE_SIZE * 0.5,
+                );
+
+                if (p_enemy.pos - tile_center).length() < (PLAYER_RADIUS + TILE_SIZE * 0.45) {
+                    kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
+                    events.push(GameEvent::Explosion {
+                        pos: p_enemy.pos,
+                        color: WHITE,
                     });
-                    events.push(GameEvent::Blink {
-                        from: p_enemy.pos,
-                        to: origin,
-                        color: enemy_color,
-                    });
-                } else {
-                    events.push(GameEvent::Laser {
-                        from: origin,
-                        to: origin + dir * limit,
-                        color: Color::new(0.5, 1.0, 0.5, 1.0),
-                    });
+                }
+
+                map.set(tx, ty, Tile::BreakableWall);
+                events.push(GameEvent::Laser {
+                    from: origin,
+                    to: tile_center,
+                    color: WHITE,
+                });
+                events.push(GameEvent::Shockwave {
+                    pos: tile_center,
+                    radius: 90.0,
+                    color: WHITE,
+                });
+
+                if is_circle_colliding(p_active.pos, PLAYER_RADIUS, map, true) {
+                    let to_player = p_active.pos - tile_center;
+                    let push_dir = if to_player.length_squared() > 0.01 {
+                        to_player.normalize()
+                    } else {
+                        -dir
+                    };
+
+                    let safe_distance = TILE_SIZE * 0.5 + PLAYER_RADIUS + 4.0;
+                    let candidate_pos = tile_center + push_dir * safe_distance;
+
+                    if !is_circle_colliding(candidate_pos, PLAYER_RADIUS, map, true) {
+                        p_active.pos = candidate_pos;
+                        events.push(GameEvent::Shockwave {
+                            pos: candidate_pos,
+                            radius: 60.0,
+                            color: my_color,
+                        });
+                    } else {
+                        map.set(tx, ty, Tile::Empty);
+                        events.push(GameEvent::Explosion {
+                            pos: tile_center,
+                            color: WHITE,
+                        });
+                    }
                 }
             }
         }
-    }
-    if input.buttons.contains(Input::UTIL) {
-        match p_active.util {
-            Utillity::Parry => todo!(),
-            Utillity::Usb(ref mut opt) => match opt {
-                None => {
-                    *opt = Some(p_active.pos);
-                    events.push(GameEvent::UsbDrop {
-                        pos: p_active.pos,
-                        color: my_color,
-                    });
-                }
-                Some(saved_pos) => {
-                    let old_pos = p_active.pos;
-                    p_active.pos = *saved_pos;
+        Weapon::NailFile => {
+            let lunge_dist = 280.0;
+            let old_pos = p_active.pos;
+            let mut target_pos = old_pos + dir * lunge_dist;
 
-                    events.push(GameEvent::UsbRecall {
-                        from: old_pos,
-                        to: p_active.pos,
-                        color: my_color,
+            if let Some(hit) = raycast_grid(old_pos, dir, lunge_dist + PLAYER_RADIUS, map) {
+                if hit.tile_type == Tile::BreakableWall {
+                    map.set(
+                        hit.tile_coord.0 as i32,
+                        hit.tile_coord.1 as i32,
+                        Tile::Empty,
+                    );
+                    events.push(GameEvent::Explosion {
+                        pos: hit.point,
+                        color: WHITE,
                     });
+                    events.push(GameEvent::Shockwave {
+                        pos: hit.point,
+                        radius: 80.0,
+                        color: WHITE,
+                    });
+
+                    if let Some(hit2) = raycast_grid(
+                        hit.point,
+                        dir,
+                        lunge_dist - hit.distance + PLAYER_RADIUS,
+                        map,
+                    ) {
+                        target_pos = hit2.point - dir * (PLAYER_RADIUS + 2.0);
+                    } else {
+                        target_pos = old_pos + dir * lunge_dist;
+                    }
+                } else {
+                    target_pos = hit.point - dir * (PLAYER_RADIUS + 2.0);
                 }
-            },
+            }
+
+            resolve_circle_collision(&mut target_pos, PLAYER_RADIUS, map, false);
+            p_active.pos = target_pos;
+
+            if let Some(_) = check_circle_hit(
+                old_pos,
+                dir,
+                lunge_dist + PLAYER_RADIUS * 1.5,
+                p_enemy.pos,
+                PLAYER_RADIUS,
+            ) {
+                if p_enemy.parry_timer > 0 {
+                    kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+                    events.push(GameEvent::Shockwave {
+                        pos: p_enemy.pos,
+                        radius: 160.0,
+                        color: GOLD,
+                    });
+                    return;
+                }
+                kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
+            }
+
+            events.push(GameEvent::Blink {
+                from: old_pos,
+                to: p_active.pos,
+                color: WHITE,
+            });
+            events.push(GameEvent::Shockwave {
+                pos: p_active.pos,
+                radius: 70.0,
+                color: my_color,
+            });
+        }
+        Weapon::Stomp => {
+            events.push(GameEvent::Shockwave {
+                pos: p_active.pos,
+                radius: 240.0,
+                color: my_color,
+            });
+            events.push(GameEvent::Shockwave {
+                pos: p_active.pos,
+                radius: 480.0,
+                color: WHITE,
+            });
+            events.push(GameEvent::Explosion {
+                pos: p_active.pos,
+                color: GRAY,
+            });
+
+            if p_active.pos.distance(p_enemy.pos) < 240.0 {
+                kill_enemy(p_enemy, enemy_score, enemy_spawn, events, enemy_color, rng);
+            }
         }
     }
-}
-
-pub struct GgrsConfig;
-
-impl ggrs::Config for GgrsConfig {
-    type Input = PlayerInput;
-    type InputPredictor = ggrs::PredictRepeatLast;
-    type State = GameState;
-    type Address = std::net::SocketAddr;
 }

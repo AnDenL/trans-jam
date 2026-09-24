@@ -1,14 +1,17 @@
 use macroquad::prelude::*;
 
+use crate::assets::Assets;
 use crate::game::game_loop;
 use crate::maps::{TILE_SIZE, Tile, load_default_map};
 use crate::simulation::GgrsConfig;
 use crate::ui::*;
 
+mod assets;
 mod config;
 mod game;
 mod maps;
 mod physics;
+mod player;
 mod render;
 mod simulation;
 mod ui;
@@ -46,6 +49,7 @@ async fn main() {
     );
     let mut editor_map_name = "map.txt".to_string();
     let mut editor_selected_tile = Tile::Wall;
+    let mut global_assets = Assets::load();
 
     loop {
         clear_background(bg);
@@ -61,6 +65,7 @@ async fn main() {
                 &mut editor_cam,
                 &mut editor_map_name,
                 &mut editor_selected_tile,
+                &global_assets,
             ),
             State::Game(ref mut game) => game_loop(game),
         }

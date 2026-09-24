@@ -5,12 +5,12 @@ use macroquad::{
 };
 use std::process::exit;
 
-use crate::game::ActiveGame;
 use crate::{
     FPS, GgrsConfig,
     maps::{Map, TILE_SIZE, Tile},
     render::draw_map,
 };
+use crate::{assets::Assets, game::ActiveGame};
 
 pub enum State {
     Menu,
@@ -101,6 +101,7 @@ pub fn editor_loop(
     cam_pos: &mut Vec2,
     map_name: &mut String,
     selected_tile: &mut Tile,
+    assets: &Assets,
 ) {
     let bg = Color::new(0.1, 0.1, 0.2, 1.0);
     clear_background(bg);
@@ -128,7 +129,7 @@ pub fn editor_loop(
     };
 
     set_camera(&camera);
-    draw_map(map);
+    draw_map(map, assets);
 
     let mouse_screen = mouse_position();
     let mouse_world = camera.screen_to_world(vec2(mouse_screen.0, mouse_screen.1));
@@ -185,6 +186,16 @@ pub fn editor_loop(
                 },
             ) {
                 *selected_tile = Tile::Wall;
+            }
+            if ui.button(
+                None,
+                if *selected_tile == Tile::BreakableWall {
+                    "[x] Breakable wall"
+                } else {
+                    "Breakable wall"
+                },
+            ) {
+                *selected_tile = Tile::BreakableWall;
             }
             if ui.button(
                 None,
