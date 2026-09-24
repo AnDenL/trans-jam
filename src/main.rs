@@ -1,7 +1,7 @@
 use macroquad::prelude::*;
 
 use crate::game::game_loop;
-use crate::maps::{Map, TILE_SIZE, Tile, load_default_map};
+use crate::maps::{TILE_SIZE, Tile, load_default_map};
 use crate::simulation::GgrsConfig;
 use crate::ui::*;
 
@@ -32,6 +32,8 @@ fn window_conf() -> Conf {
 async fn main() {
     let bg = Color::new(0.02, 0.03, 0.05, 1.0);
     let mut state = State::Menu;
+
+    let conf_file = load_file("config.txt");
 
     let mut username = "username".to_owned();
     let mut port = "7575".to_owned();

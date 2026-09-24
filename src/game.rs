@@ -1,10 +1,9 @@
 use ggrs::P2PSession;
-use macroquad::{input::KeyCode::N, prelude::*};
+use macroquad::prelude::*;
 
 use crate::{
-    maps::Map,
     render::{VisualEffects, draw_drone, draw_map},
-    simulation::{GameState, GgrsConfig, Input, Player, PlayerInput},
+    simulation::{GameState, GgrsConfig, Input, Player, PlayerInput, Utillity},
 };
 
 pub struct ActiveGame {
@@ -26,6 +25,16 @@ impl ActiveGame {
             p2_spawn
         };
 
+        let mut seed = 13377331u64;
+        let p1_weapon = crate::simulation::roll_weapon(&mut seed);
+        let p2_weapon = crate::simulation::roll_weapon(&mut seed);
+
+        let p1_move = crate::simulation::roll_movement(&mut seed);
+        let p2_move = crate::simulation::roll_movement(&mut seed);
+
+        let p1_util = crate::simulation::roll_util(&mut seed);
+        let p2_util = crate::simulation::roll_util(&mut seed);
+
         Self {
             session,
             local_handle,
@@ -33,17 +42,22 @@ impl ActiveGame {
                 p1: Player {
                     pos: p1_spawn,
                     dir: vec2(1.0, 0.0),
-                    usb_pos: None,
+                    weapon: p1_weapon,
+                    movement: p1_move,
+                    util: p1_util,
                 },
                 p2: Player {
                     pos: p2_spawn,
                     dir: vec2(-1.0, 0.0),
-                    usb_pos: None,
+                    weapon: p2_weapon,
+                    movement: p2_move,
+                    util: p2_util,
                 },
                 score_p1: 0,
                 score_p2: 0,
                 events: Vec::new(),
                 map: loaded_map,
+                rng_seed: 1,
             },
             effects: VisualEffects {
                 cam_pos: my_spawn,
@@ -93,13 +107,13 @@ pub fn game_loop(game: &mut ActiveGame) {
             input |= Input::DOWN;
         }
         if is_key_pressed(KeyCode::Space) {
-            input |= Input::HOOK;
+            input |= Input::MOVE;
         }
         if is_mouse_button_pressed(MouseButton::Left) {
             input |= Input::FIRE;
         }
         if is_mouse_button_pressed(MouseButton::Right) {
-            input |= Input::EXPLODE;
+            input |= Input::UTIL;
         }
 
         let mouse_screen = mouse_position();
@@ -144,15 +158,19 @@ pub fn game_loop(game: &mut ActiveGame) {
     set_camera(&camera);
     draw_map(&game.state.map);
 
-    if let Some(pos) = game.state.p1.usb_pos {
-        draw_rectangle(pos.x - 8.0, pos.y - 14.0, 16.0, 28.0, GOLD);
-        draw_rectangle(pos.x - 5.0, pos.y - 20.0, 10.0, 6.0, LIGHTGRAY);
-        draw_circle_lines(pos.x, pos.y, 24.0, 1.5, Color::new(1.0, 0.84, 0.0, 0.4));
+    if let Utillity::Usb(opt) = game.state.p1.util {
+        if let Some(pos) = opt {
+            draw_rectangle(pos.x - 8.0, pos.y - 14.0, 16.0, 28.0, GOLD);
+            draw_rectangle(pos.x - 5.0, pos.y - 20.0, 10.0, 6.0, LIGHTGRAY);
+            draw_circle_lines(pos.x, pos.y, 24.0, 1.5, Color::new(1.0, 0.84, 0.0, 0.4));
+        }
     }
-    if let Some(pos) = game.state.p2.usb_pos {
-        draw_rectangle(pos.x - 8.0, pos.y - 14.0, 16.0, 28.0, SKYBLUE);
-        draw_rectangle(pos.x - 5.0, pos.y - 20.0, 10.0, 6.0, LIGHTGRAY);
-        draw_circle_lines(pos.x, pos.y, 24.0, 1.5, Color::new(0.53, 0.81, 0.92, 0.4));
+    if let Utillity::Usb(opt) = game.state.p2.util {
+        if let Some(pos) = opt {
+            draw_rectangle(pos.x - 8.0, pos.y - 14.0, 16.0, 28.0, SKYBLUE);
+            draw_rectangle(pos.x - 5.0, pos.y - 20.0, 10.0, 6.0, LIGHTGRAY);
+            draw_circle_lines(pos.x, pos.y, 24.0, 1.5, Color::new(0.53, 0.81, 0.92, 0.4));
+        }
     }
 
     for laser in &game.effects.lasers {
