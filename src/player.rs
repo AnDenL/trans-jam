@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     PLAYER_RADIUS,
-    maps::Map,
-    physics::{is_circle_colliding, raycast_grid, resolve_circle_collision},
+    maps::{Map, Tile},
+    physics::{check_circle_hit, is_circle_colliding, raycast_grid, resolve_circle_collision},
     simulation::*,
 };
 
@@ -148,6 +148,76 @@ pub fn process_player(
                 }
                 crate::physics::ZipperResult::Failed => {}
             },
+            Movement::NailFile => {
+                let lunge_dist = 280.0;
+                let old_pos = p_active.pos;
+                let mut target_pos = old_pos + dir * lunge_dist;
+
+                if let Some(hit) = raycast_grid(old_pos, dir, lunge_dist + PLAYER_RADIUS, map) {
+                    if hit.tile_type == Tile::BreakableWall {
+                        map.set(
+                            hit.tile_coord.0 as i32,
+                            hit.tile_coord.1 as i32,
+                            Tile::Empty,
+                        );
+                        events.push(GameEvent::Explosion {
+                            pos: hit.point,
+                            color: WHITE,
+                        });
+                        events.push(GameEvent::Shockwave {
+                            pos: hit.point,
+                            radius: 80.0,
+                            color: WHITE,
+                        });
+
+                        if let Some(hit2) = raycast_grid(
+                            hit.point,
+                            dir,
+                            lunge_dist - hit.distance + PLAYER_RADIUS,
+                            map,
+                        ) {
+                            target_pos = hit2.point - dir * (PLAYER_RADIUS + 2.0);
+                        } else {
+                            target_pos = old_pos + dir * lunge_dist;
+                        }
+                    } else {
+                        target_pos = hit.point - dir * (PLAYER_RADIUS + 2.0);
+                    }
+                }
+
+                resolve_circle_collision(&mut target_pos, PLAYER_RADIUS, map, false);
+                p_active.pos = target_pos;
+
+                if let Some(_) = check_circle_hit(
+                    old_pos,
+                    dir,
+                    lunge_dist + PLAYER_RADIUS * 1.5,
+                    p_enemy.pos,
+                    PLAYER_RADIUS,
+                ) {
+                    if p_enemy.parry_timer > 0 {
+                        kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+                        events.push(GameEvent::Shockwave {
+                            pos: p_enemy.pos,
+                            radius: 160.0,
+                            color: GOLD,
+                        });
+                        return;
+                    }
+                    kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
+                }
+
+                events.push(GameEvent::Blink {
+                    from: old_pos,
+                    to: p_active.pos,
+                    color: WHITE,
+                });
+                events.push(GameEvent::Shockwave {
+                    pos: p_active.pos,
+                    radius: 70.0,
+                    color: my_color,
+                });
+            }
         }
     }
 

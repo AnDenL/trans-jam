@@ -4,7 +4,7 @@ use crate::PLAYER_RADIUS;
 use crate::assets::Assets;
 use crate::maps::{Map, TILE_SIZE, Tile};
 use crate::player::Player;
-use crate::simulation::{GameEvent, Utillity, Weapon};
+use crate::simulation::{GameEvent, Movement, Utillity, Weapon};
 
 pub fn draw_drone(pos: Vec2, dir: Vec2, color: Color, parry_timer: u8) {
     if parry_timer > 0 {
@@ -417,7 +417,6 @@ pub fn draw_loadout_hud(player: &Player, my_color: Color) {
         Weapon::Shotgun => ("SHOTGUN", "5-beam close spread"),
         Weapon::Piercing => ("PIERCER", "Passes through walls"),
         Weapon::WhiteOut => ("WHITE OUT", "Spawns 1-hit cover / Crushes"),
-        Weapon::NailFile => ("NAIL FILE", "Instant thrust dash"),
         Weapon::Stomp => ("STOMP", "Kills if enemy neaby"),
     };
     draw_text("[LMB] WEAPON", x + 15.0, y + 25.0, 16.0, DARKGRAY);
@@ -425,8 +424,9 @@ pub fn draw_loadout_hud(player: &Player, my_color: Color) {
     draw_text(w_desc, x + 15.0, y + 75.0, 14.0, GRAY);
 
     let (m_name, m_desc) = match player.movement {
-        crate::simulation::Movement::Hook => ("HOOK", "Instant pull/blink"),
-        crate::simulation::Movement::Zipper => ("ZIPPER", "Phases through walls"),
+        Movement::Hook => ("HOOK", "Instant pull/blink"),
+        Movement::Zipper => ("ZIPPER", "Phases through walls"),
+        Movement::NailFile => ("NAIL FILE", "Instant thrust dash"),
     };
     let m_x = x + 160.0;
     draw_line(
