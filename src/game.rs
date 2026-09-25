@@ -3,6 +3,7 @@ use macroquad::prelude::*;
 
 use crate::{
     assets::Assets,
+    maps::{TILE_SIZE, Tile},
     player::{Input, Player, PlayerInput},
     render::{VisualEffects, draw_drone, draw_loadout_hud, draw_map},
     simulation::{self, GameState, GgrsConfig},
@@ -225,18 +226,51 @@ pub fn game_loop(game: &mut ActiveGame) {
         );
     }
 
-    draw_drone(
-        game.state.p1.pos,
-        game.state.p1.dir,
-        GOLD,
-        game.state.p1.parry_timer,
-    );
-    draw_drone(
-        game.state.p2.pos,
-        game.state.p2.dir,
-        SKYBLUE,
-        game.state.p2.parry_timer,
-    );
+    let p1_in_smoke = game.state.map.get(
+        (game.state.p1.pos.x / TILE_SIZE) as i32,
+        (game.state.p1.pos.y / TILE_SIZE) as i32,
+    ) == Tile::Smoke;
+    let p2_in_smoke = game.state.map.get(
+        (game.state.p2.pos.x / TILE_SIZE) as i32,
+        (game.state.p2.pos.y / TILE_SIZE) as i32,
+    ) == Tile::Smoke;
+
+    let p1_hidden = p1_in_smoke && game.state.p1.reveal_timer == 0;
+    let p2_hidden = p2_in_smoke && game.state.p2.reveal_timer == 0;
+
+    if game.local_handle == 0 {
+        let alpha = if p1_hidden { 0.4 } else { 1.0 };
+        draw_drone(
+            game.state.p1.pos,
+            game.state.p1.dir,
+            Color::new(GOLD.r, GOLD.g, GOLD.b, alpha),
+            game.state.p1.parry_timer,
+        );
+        if !p2_hidden {
+            draw_drone(
+                game.state.p2.pos,
+                game.state.p2.dir,
+                SKYBLUE,
+                game.state.p2.parry_timer,
+            );
+        }
+    } else {
+        let alpha = if p2_hidden { 0.4 } else { 1.0 };
+        draw_drone(
+            game.state.p2.pos,
+            game.state.p2.dir,
+            Color::new(SKYBLUE.r, SKYBLUE.g, SKYBLUE.b, alpha),
+            game.state.p2.parry_timer,
+        );
+        if !p1_hidden {
+            draw_drone(
+                game.state.p1.pos,
+                game.state.p1.dir,
+                GOLD,
+                game.state.p1.parry_timer,
+            );
+        }
+    }
     set_default_camera();
 
     if game.session.current_state() == ggrs::SessionState::Running {

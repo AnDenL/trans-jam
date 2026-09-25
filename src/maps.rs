@@ -7,6 +7,9 @@ pub enum Tile {
     Empty,
     Wall,
     BreakableWall,
+    Mirror,
+    Glass,
+    Smoke,
     SpawnP1,
     SpawnP2,
 }
@@ -128,6 +131,9 @@ impl Map {
                     Tile::Wall => '#',
                     Tile::Empty => '.',
                     Tile::BreakableWall => '=',
+                    Tile::Mirror => 'M',
+                    Tile::Glass => 'G',
+                    Tile::Smoke => 'S',
                     Tile::SpawnP1 => '1',
                     Tile::SpawnP2 => '2',
                 });
@@ -156,6 +162,9 @@ impl Map {
                 tiles.push(match ch {
                     '#' => Tile::Wall,
                     '=' => Tile::BreakableWall,
+                    'M' => Tile::Mirror,
+                    'G' => Tile::Glass,
+                    'S' => Tile::Smoke,
                     '1' => Tile::SpawnP1,
                     '2' => Tile::SpawnP2,
                     _ => Tile::Empty,

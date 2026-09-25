@@ -40,6 +40,7 @@ pub struct Player {
     pub history: [PlayerInput; 60],
     pub history_idx: usize,
     pub parry_timer: u8,
+    pub reveal_timer: u8,
 }
 
 impl Default for Player {
@@ -54,6 +55,7 @@ impl Default for Player {
             history: [PlayerInput::default(); 60],
             history_idx: 0,
             parry_timer: 0,
+            reveal_timer: 0,
         }
     }
 }
@@ -99,8 +101,16 @@ pub fn process_player(
     p_active.history[p_active.history_idx % 60] = input;
     p_active.history_idx += 1;
 
+    if p_active.reveal_timer > 0 {
+        p_active.reveal_timer -= 1;
+    }
+
+    if just_pressed_fire || just_pressed_move || just_pressed_dmove || just_pressed_util {
+        p_active.reveal_timer = 30;
+    }
+
     if just_pressed_move || just_pressed_dmove {
-        let origin = p_active.pos; //
+        let origin = p_active.pos;
 
         let dir = if just_pressed_dmove && move_dir.length_squared() > 0.001 {
             move_dir.normalize()
@@ -312,6 +322,31 @@ pub fn process_player(
                 });
 
                 p_active.util = Utillity::None;
+            }
+            Utillity::Dice => {
+                let old_weapon = p_active.weapon;
+                loop {
+                    let next = roll_weapon(rng);
+                    if next != old_weapon {
+                        p_active.weapon = next;
+                        break;
+                    }
+                }
+
+                events.push(GameEvent::Shockwave {
+                    pos: p_active.pos,
+                    radius: 140.0,
+                    color: Color::new(0.8, 0.3, 1.0, 1.0),
+                });
+                events.push(GameEvent::Explosion {
+                    pos: p_active.pos,
+                    color: Color::new(1.0, 0.85, 0.2, 1.0),
+                });
+                events.push(GameEvent::Shockwave {
+                    pos: p_active.pos,
+                    radius: 70.0,
+                    color: WHITE,
+                });
             }
             Utillity::None => {}
         }

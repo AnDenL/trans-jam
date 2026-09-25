@@ -83,7 +83,60 @@ pub fn draw_map(map: &Map, assets: &Assets) {
                         },
                     );
                 }
-                Tile::Empty => {
+                Tile::Mirror => {
+                    draw_rectangle(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        Color::new(0.18, 0.28, 0.38, 1.0),
+                    );
+                    draw_rectangle_lines(px, py, TILE_SIZE, TILE_SIZE, 3.0, SKYBLUE);
+                    draw_texture_ex(
+                        &assets.light_tex,
+                        px,
+                        py,
+                        Color::new(1.0, 0.8, 1.0, 0.2),
+                        DrawTextureParams {
+                            dest_size: Some(vec2(TILE_SIZE, TILE_SIZE)),
+                            ..Default::default()
+                        },
+                    );
+                }
+                Tile::Glass => {
+                    draw_rectangle(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        Color::new(0.08, 0.12, 0.16, 0.5),
+                    );
+                    draw_rectangle_lines(
+                        px,
+                        py,
+                        TILE_SIZE,
+                        TILE_SIZE,
+                        2.0,
+                        Color::new(0.3, 0.4, 0.5, 0.7),
+                    );
+                    draw_line(
+                        px + TILE_SIZE * 0.5,
+                        py,
+                        px + TILE_SIZE * 0.5,
+                        py + TILE_SIZE,
+                        1.0,
+                        Color::new(0.3, 0.4, 0.5, 0.4),
+                    );
+                    draw_line(
+                        px,
+                        py + TILE_SIZE * 0.5,
+                        px + TILE_SIZE,
+                        py + TILE_SIZE * 0.5,
+                        1.0,
+                        Color::new(0.3, 0.4, 0.5, 0.4),
+                    );
+                }
+                Tile::Empty | Tile::Smoke => {
                     let hash = ((x * 73856093) ^ (y * 19349663)) as u32;
 
                     let shade = 0.045 + (hash % 15) as f32 * 0.001;
@@ -166,6 +219,31 @@ pub fn draw_map(map: &Map, assets: &Assets) {
             }
         }
     }
+
+    let pad = 70.0;
+    let draw_size = TILE_SIZE + pad * 2.0;
+
+    assets.smoke_mat.set_uniform("Time", get_time() as f32);
+    assets
+        .smoke_mat
+        .set_texture("NoiseTex", assets.noise_tex.clone());
+
+    gl_use_material(&assets.smoke_mat);
+
+    for y in 0..map.h {
+        for x in 0..map.w {
+            if map.get(x as i32, y as i32) == Tile::Smoke {
+                let px = x as f32 * TILE_SIZE;
+                let py = y as f32 * TILE_SIZE;
+
+                assets.smoke_mat.set_uniform("WorldOffset", vec2(px, py));
+                assets.smoke_mat.set_uniform("DrawSize", draw_size);
+                draw_rectangle(px - pad, py - pad, draw_size, draw_size, WHITE);
+            }
+        }
+    }
+
+    gl_use_default_material();
 }
 
 pub struct Particle {
@@ -418,6 +496,7 @@ pub fn draw_loadout_hud(player: &Player, my_color: Color) {
         Weapon::Piercing => ("PIERCER", "Passes through walls"),
         Weapon::WhiteOut => ("WHITE OUT", "Spawns 1-hit cover / Crushes"),
         Weapon::Stomp => ("STOMP", "Kills if enemy neaby"),
+        Weapon::Spring => ("SPRING", "Pushes the enemy"),
     };
     draw_text("[LMB] WEAPON", x + 15.0, y + 25.0, 16.0, DARKGRAY);
     draw_text(w_name, x + 15.0, y + 50.0, 22.0, WHITE);
@@ -447,6 +526,7 @@ pub fn draw_loadout_hud(player: &Player, my_color: Color) {
         Utillity::Usb(Some(_)) => ("USB: RECALL", "Teleport to point", GREEN),
         Utillity::Parry => ("PARRY", "Deflect attack", ORANGE),
         Utillity::None => ("SPENT", "Used this life", DARKGRAY),
+        Utillity::Dice => ("DICE", "Rerolls your weapon", GRAY),
     };
     let u_x = x + 310.0;
     draw_line(

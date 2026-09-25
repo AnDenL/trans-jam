@@ -75,7 +75,7 @@ pub fn raycast_grid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option
         }
 
         let tile = map.get(map_x, map_y);
-        if tile == Tile::Wall || tile == Tile::BreakableWall {
+        if tile == Tile::Wall || tile == Tile::BreakableWall || tile == Tile::Mirror {
             hit = true;
             hit_tile = tile;
             break;
@@ -128,10 +128,10 @@ pub fn is_circle_colliding(pos: Vec2, radius: f32, map: &Map, ignore_breakable: 
     for ty in min_ty..=max_ty {
         for tx in min_tx..=max_tx {
             let tile = map.get(tx, ty);
-            let is_solid = if ignore_breakable {
-                tile == Tile::Wall
-            } else {
-                tile == Tile::Wall || tile == Tile::BreakableWall
+            let is_solid = match tile {
+                Tile::Wall | Tile::Mirror | Tile::Glass => true,
+                Tile::BreakableWall => !ignore_breakable,
+                _ => false,
             };
 
             if is_solid {
@@ -168,10 +168,10 @@ pub fn resolve_circle_collision(pos: &mut Vec2, radius: f32, map: &Map, ignore_b
         for ty in min_ty..=max_ty {
             for tx in min_tx..=max_tx {
                 let tile = map.get(tx, ty);
-                let is_solid = if ignore_breakable {
-                    tile == Tile::Wall
-                } else {
-                    tile == Tile::Wall || tile == Tile::BreakableWall
+                let is_solid = match tile {
+                    Tile::Wall | Tile::Mirror | Tile::Glass => true,
+                    Tile::BreakableWall => !ignore_breakable,
+                    _ => false,
                 };
 
                 if is_solid {

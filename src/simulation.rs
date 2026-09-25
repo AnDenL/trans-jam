@@ -127,6 +127,7 @@ pub enum Weapon {
     Piercing,
     WhiteOut,
     Stomp,
+    Spring,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -144,15 +145,17 @@ pub enum Utillity {
     Parry,
     ZaWarudo,
     Usb(Option<Vec2>),
+    Dice,
 }
 
 pub fn roll_weapon(rng: &mut u64) -> Weapon {
-    match xorshift64(rng) % 5 {
+    match xorshift64(rng) % 6 {
         0 => Weapon::Railgun,
         1 => Weapon::Shotgun,
         2 => Weapon::Piercing,
         3 => Weapon::WhiteOut,
-        _ => Weapon::Stomp,
+        4 => Weapon::Stomp,
+        _ => Weapon::Spring,
     }
 }
 
@@ -165,16 +168,17 @@ pub fn roll_movement(rng: &mut u64) -> Movement {
 }
 
 pub fn roll_util(rng: &mut u64) -> Utillity {
-    match xorshift64(rng) % 3 {
+    match xorshift64(rng) % 4 {
         0 => Utillity::Usb(None),
         1 => Utillity::ZaWarudo,
+        2 => Utillity::Dice,
         _ => Utillity::Parry,
     }
 }
 
 pub fn fire_ray(
-    origin: Vec2,
-    dir: Vec2,
+    mut origin: Vec2,
+    mut dir: Vec2,
     max_range: f32,
     p_active: &mut Player,
     p_enemy: &mut Player,
@@ -188,59 +192,75 @@ pub fn fire_ray(
     map: &mut Map,
     rng: &mut u64,
 ) {
-    let wall_hit = raycast_grid(origin, dir, max_range, map);
-    let limit = wall_hit.map(|h| h.distance).unwrap_or(max_range);
+    let mut remaining_dist = max_range;
 
-    if let Some(hit_dist) = check_circle_hit(origin, dir, limit, p_enemy.pos, PLAYER_RADIUS) {
-        if p_enemy.parry_timer > 0 {
-            kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+    for _ in 0..3 {
+        let wall_hit = raycast_grid(origin, dir, remaining_dist, map);
+        let limit = wall_hit.map(|h| h.distance).unwrap_or(remaining_dist);
+
+        if let Some(hit_dist) = check_circle_hit(origin, dir, limit, p_enemy.pos, PLAYER_RADIUS) {
+            if p_enemy.parry_timer > 0 {
+                kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+                events.push(GameEvent::Laser {
+                    from: origin,
+                    to: p_enemy.pos,
+                    color: enemy_color,
+                });
+                events.push(GameEvent::Shockwave {
+                    pos: p_enemy.pos,
+                    radius: 160.0,
+                    color: GOLD,
+                });
+                return;
+            }
+
+            kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
             events.push(GameEvent::Laser {
                 from: origin,
-                to: p_enemy.pos,
-                color: enemy_color,
-            });
-            events.push(GameEvent::Shockwave {
-                pos: p_enemy.pos,
-                radius: 160.0,
-                color: GOLD,
-            });
-            events.push(GameEvent::Explosion {
-                pos: p_enemy.pos,
-                color: WHITE,
+                to: origin + dir * hit_dist,
+                color: my_color,
             });
             return;
         }
 
-        kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
+        let end_point = origin + dir * limit;
         events.push(GameEvent::Laser {
             from: origin,
-            to: origin + dir * hit_dist,
-            color: my_color,
-        });
-    } else {
-        events.push(GameEvent::Laser {
-            from: origin,
-            to: origin + dir * limit,
+            to: end_point,
             color: my_color,
         });
 
         if let Some(hit) = wall_hit {
-            if hit.tile_type == Tile::BreakableWall {
-                map.set(
-                    hit.tile_coord.0 as i32,
-                    hit.tile_coord.1 as i32,
-                    Tile::Empty,
-                );
-                events.push(GameEvent::Explosion {
-                    pos: hit.point,
-                    color: WHITE,
-                });
-                events.push(GameEvent::Shockwave {
-                    pos: hit.point,
-                    radius: 80.0,
-                    color: LIGHTGRAY,
-                });
+            match hit.tile_type {
+                Tile::Mirror => {
+                    events.push(GameEvent::Shockwave {
+                        pos: hit.point,
+                        radius: 30.0,
+                        color: SKYBLUE,
+                    });
+                    dir = dir - 2.0 * dir.dot(hit.normal) * hit.normal;
+                    origin = hit.point + hit.normal * 1.0;
+                    remaining_dist -= limit;
+                    if remaining_dist <= 20.0 {
+                        break;
+                    }
+                }
+                Tile::BreakableWall => {
+                    map.set(
+                        hit.tile_coord.0 as i32,
+                        hit.tile_coord.1 as i32,
+                        Tile::Empty,
+                    );
+                    events.push(GameEvent::Explosion {
+                        pos: hit.point,
+                        color: WHITE,
+                    });
+                    break;
+                }
+                _ => break,
             }
+        } else {
+            break;
         }
     }
 }
@@ -292,7 +312,7 @@ pub fn execute_weapon(
                 fire_ray(
                     origin,
                     spread_dir,
-                    1000.0,
+                    800.0,
                     p_active,
                     p_enemy,
                     score,
@@ -449,7 +469,7 @@ pub fn execute_weapon(
         Weapon::Stomp => {
             events.push(GameEvent::Shockwave {
                 pos: p_active.pos,
-                radius: 240.0,
+                radius: 320.0,
                 color: my_color,
             });
             events.push(GameEvent::Shockwave {
@@ -462,8 +482,156 @@ pub fn execute_weapon(
                 color: GRAY,
             });
 
-            if p_active.pos.distance(p_enemy.pos) < 240.0 {
+            if p_active.pos.distance(p_enemy.pos) < 320.0 {
                 kill_enemy(p_enemy, enemy_score, enemy_spawn, events, enemy_color, rng);
+            }
+        }
+        Weapon::Spring => {
+            let max_range = 1200.0;
+            let push_force = 500.0;
+            let wall_hit = raycast_grid(origin, dir, max_range, map);
+            if let Some(hit) = wall_hit {
+                if hit.tile_type == Tile::BreakableWall {
+                    map.set(
+                        hit.tile_coord.0 as i32,
+                        hit.tile_coord.1 as i32,
+                        Tile::Empty,
+                    );
+                }
+            }
+            let limit = wall_hit.map(|h| h.distance).unwrap_or(max_range);
+
+            let perp = vec2(-dir.y, dir.x) * 22.0;
+            events.push(GameEvent::Laser {
+                from: origin - perp,
+                to: origin + dir * limit - perp,
+                color: Color::new(0.3, 0.95, 0.4, 0.8),
+            });
+            events.push(GameEvent::Laser {
+                from: origin,
+                to: origin + dir * limit,
+                color: Color::new(0.6, 1.0, 0.6, 1.0),
+            });
+            events.push(GameEvent::Laser {
+                from: origin + perp,
+                to: origin + dir * limit + perp,
+                color: Color::new(0.3, 0.95, 0.4, 0.8),
+            });
+            events.push(GameEvent::Shockwave {
+                pos: origin + dir * 60.0,
+                radius: 110.0,
+                color: Color::new(0.3, 0.95, 0.4, 1.0),
+            });
+
+            if let Some(_) = check_circle_hit(origin, dir, limit, p_enemy.pos, PLAYER_RADIUS * 2.2)
+            {
+                if p_enemy.parry_timer > 0 {
+                    kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+                    events.push(GameEvent::Shockwave {
+                        pos: p_enemy.pos,
+                        radius: 160.0,
+                        color: GOLD,
+                    });
+                    return;
+                }
+
+                let start_enemy_pos = p_enemy.pos;
+                let enemy_wall_hit =
+                    raycast_grid(start_enemy_pos, dir, push_force + PLAYER_RADIUS, map);
+
+                match enemy_wall_hit {
+                    Some(hit) if hit.distance <= push_force => {
+                        let impact_pos = hit.point - dir * (PLAYER_RADIUS * 0.5);
+                        p_enemy.pos = impact_pos;
+
+                        if hit.tile_type == Tile::BreakableWall {
+                            map.set(
+                                hit.tile_coord.0 as i32,
+                                hit.tile_coord.1 as i32,
+                                Tile::Empty,
+                            );
+                        }
+
+                        events.push(GameEvent::Blink {
+                            from: start_enemy_pos,
+                            to: impact_pos,
+                            color: Color::new(0.3, 0.95, 0.4, 0.6),
+                        });
+                        kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
+
+                        events.push(GameEvent::Explosion {
+                            pos: hit.point,
+                            color: Color::new(0.3, 0.95, 0.4, 1.0),
+                        });
+                        events.push(GameEvent::Shockwave {
+                            pos: hit.point,
+                            radius: 150.0,
+                            color: WHITE,
+                        });
+                    }
+                    Some(hit) => {
+                        let final_pos = hit.point - dir * (PLAYER_RADIUS + 2.0);
+                        events.push(GameEvent::Blink {
+                            from: start_enemy_pos,
+                            to: final_pos,
+                            color: Color::new(0.3, 0.95, 0.4, 0.5),
+                        });
+                        p_enemy.pos = final_pos;
+                        resolve_circle_collision(&mut p_enemy.pos, PLAYER_RADIUS, map, false);
+                        events.push(GameEvent::Shockwave {
+                            pos: p_enemy.pos,
+                            radius: 100.0,
+                            color: Color::new(0.3, 0.95, 0.4, 1.0),
+                        });
+                    }
+                    None => {
+                        let final_pos = start_enemy_pos + dir * push_force;
+                        events.push(GameEvent::Blink {
+                            from: start_enemy_pos,
+                            to: final_pos,
+                            color: Color::new(0.3, 0.95, 0.4, 0.5),
+                        });
+                        p_enemy.pos = final_pos;
+                        resolve_circle_collision(&mut p_enemy.pos, PLAYER_RADIUS, map, false);
+                        events.push(GameEvent::Shockwave {
+                            pos: p_enemy.pos,
+                            radius: 100.0,
+                            color: Color::new(0.3, 0.95, 0.4, 1.0),
+                        });
+                    }
+                }
+            }
+
+            if let Some(hit) = wall_hit {
+                if hit.distance < 360.0 {
+                    let recoil_dist = (360.0 - hit.distance).min(280.0) + 100.0;
+                    let recoil_dir = -dir;
+
+                    let back_hit =
+                        raycast_grid(origin, recoil_dir, recoil_dist + PLAYER_RADIUS, map);
+                    let actual_recoil_pos = match back_hit {
+                        Some(b_hit) => b_hit.point - recoil_dir * (PLAYER_RADIUS + 2.0),
+                        None => origin + recoil_dir * recoil_dist,
+                    };
+
+                    events.push(GameEvent::Blink {
+                        from: origin,
+                        to: actual_recoil_pos,
+                        color: WHITE,
+                    });
+                    p_active.pos = actual_recoil_pos;
+                    resolve_circle_collision(&mut p_active.pos, PLAYER_RADIUS, map, false);
+
+                    events.push(GameEvent::Explosion {
+                        pos: hit.point,
+                        color: WHITE,
+                    });
+                    events.push(GameEvent::Shockwave {
+                        pos: hit.point,
+                        radius: 90.0,
+                        color: Color::new(0.3, 0.95, 0.4, 1.0),
+                    });
+                }
             }
         }
     }

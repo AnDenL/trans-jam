@@ -199,6 +199,36 @@ pub fn editor_loop(
             }
             if ui.button(
                 None,
+                if *selected_tile == Tile::Mirror {
+                    "[x] Mirror"
+                } else {
+                    "Mirror"
+                },
+            ) {
+                *selected_tile = Tile::Mirror;
+            }
+            if ui.button(
+                None,
+                if *selected_tile == Tile::Glass {
+                    "[x] Glass"
+                } else {
+                    "Glass"
+                },
+            ) {
+                *selected_tile = Tile::Glass;
+            }
+            if ui.button(
+                None,
+                if *selected_tile == Tile::Smoke {
+                    "[x] Smoke"
+                } else {
+                    "Smoke"
+                },
+            ) {
+                *selected_tile = Tile::Smoke;
+            }
+            if ui.button(
+                None,
                 if *selected_tile == Tile::SpawnP1 {
                     "[x] Spawn P1"
                 } else {
