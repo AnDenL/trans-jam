@@ -1,3 +1,4 @@
+use macroquad::audio::play_sound_once;
 use macroquad::prelude::*;
 
 use crate::PLAYER_RADIUS;

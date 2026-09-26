@@ -1,9 +1,13 @@
 use bitflags::bitflags;
-use macroquad::prelude::*;
+use macroquad::{
+    audio::{PlaySoundParams, play_sound, play_sound_once},
+    prelude::*,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     PLAYER_RADIUS,
+    assets::Assets,
     maps::{Map, Tile},
     physics::{check_circle_hit, is_circle_colliding, raycast_grid, resolve_circle_collision},
     simulation::*,
@@ -73,6 +77,7 @@ pub fn process_player(
     enemy_spawn: Vec2,
     map: &mut Map,
     rng: &mut u64,
+    assets: &Assets,
 ) {
     let speed = 12.0;
 
@@ -206,7 +211,15 @@ pub fn process_player(
                     PLAYER_RADIUS,
                 ) {
                     if p_enemy.parry_timer > 0 {
-                        kill_enemy(p_active, enemy_score, my_spawn, events, my_color, rng);
+                        kill_enemy(
+                            p_active,
+                            enemy_score,
+                            my_spawn,
+                            events,
+                            my_color,
+                            rng,
+                            assets,
+                        );
                         events.push(GameEvent::Shockwave {
                             pos: p_enemy.pos,
                             radius: 160.0,
@@ -214,7 +227,15 @@ pub fn process_player(
                         });
                         return;
                     }
-                    kill_enemy(p_enemy, score, enemy_spawn, events, enemy_color, rng);
+                    kill_enemy(
+                        p_enemy,
+                        score,
+                        enemy_spawn,
+                        events,
+                        enemy_color,
+                        rng,
+                        assets,
+                    );
                 }
 
                 events.push(GameEvent::Blink {
@@ -245,6 +266,7 @@ pub fn process_player(
             enemy_color,
             map,
             rng,
+            assets,
         );
     }
     if just_pressed_util {
@@ -307,6 +329,7 @@ pub fn process_player(
                             enemy_color,
                             map,
                             rng,
+                            assets,
                         );
                     }
                 }
@@ -361,9 +384,21 @@ pub fn kill_enemy(
     events: &mut Vec<GameEvent>,
     enemy_color: Color,
     rng: &mut u64,
+    assets: &Assets,
 ) {
     *score += 1;
     let death_pos = p_enemy.pos;
+
+    let volume = rand::gen_range(0.8, 1.0);
+
+    play_sound(
+        &assets.snd_explosion,
+        PlaySoundParams {
+            looped: false,
+            volume,
+        },
+    );
+
     p_enemy.pos = enemy_spawn;
     p_enemy.weapon = roll_weapon(rng);
     p_enemy.movement = roll_movement(rng);

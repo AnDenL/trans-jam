@@ -1,4 +1,5 @@
 use macroquad::{
+    audio::{Sound, load_sound_from_bytes},
     miniquad::{BlendFactor, BlendState, BlendValue, Equation},
     prelude::*,
 };
@@ -8,10 +9,16 @@ pub struct Assets {
     pub light_tex: Texture2D,
     pub noise_tex: Texture2D,
     pub smoke_mat: Material,
+
+    pub snd_laser: Sound,
+    pub snd_explosion: Sound,
+    // pub snd_shockwave: Sound,
+    // pub snd_parry: Sound,
+    // pub snd_blink: Sound,
 }
 
 impl Assets {
-    pub fn load() -> Self {
+    pub async fn load() -> Self {
         let crack_bytes = include_bytes!("../assets/crack.png");
         let crack_tex = Texture2D::from_file_with_format(crack_bytes, None);
         crack_tex.set_filter(FilterMode::Linear);
@@ -26,11 +33,30 @@ impl Assets {
 
         let smoke_mat = create_smoke_material();
 
+        let snd_laser = load_sound_from_bytes(include_bytes!("../assets/laser.wav"))
+            .await
+            .expect("Failed to load laser.wav");
+        let snd_explosion = load_sound_from_bytes(include_bytes!("../assets/explosion.wav"))
+            .await
+            .expect("Failed to load explosion.wav");
+        // let snd_shockwave = load_sound_from_bytes(include_bytes!("../assets/shockwave.wav"))
+        //     .await
+        //     .expect("Failed to load shockwave.wav");
+        // let snd_parry = load_sound_from_bytes(include_bytes!("../assets/parry.wav"))
+        //     .await
+        //     .expect("Failed to load parry.wav");
+        // let snd_blink = load_sound_from_bytes(include_bytes!("../assets/blink.wav"))
+        //     .await
+        //     .expect("Failed to load blink.wav");
+
         Self {
             crack_tex,
             light_tex,
             noise_tex,
             smoke_mat,
+
+            snd_laser,
+            snd_explosion,
         }
     }
 }

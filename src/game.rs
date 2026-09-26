@@ -2,8 +2,8 @@ use ggrs::P2PSession;
 use macroquad::prelude::*;
 
 use crate::{
-    assets::Assets,
-    maps::{TILE_SIZE, Tile},
+    assets::{self, Assets},
+    maps::{Map, TILE_SIZE, Tile},
     player::{Input, Player, PlayerInput},
     render::{VisualEffects, draw_drone, draw_loadout_hud, draw_map},
     simulation::{self, GameState, GgrsConfig},
@@ -15,13 +15,11 @@ pub struct ActiveGame {
     pub local_handle: usize,
     pub state: GameState,
     pub effects: VisualEffects,
-    pub assets: Assets,
 }
 
 impl ActiveGame {
-    pub fn new(session: P2PSession<GgrsConfig>, local_handle: usize) -> Self {
-        let loaded_map = crate::maps::load_default_map();
-        let (p1_spawns, p2_spawns) = loaded_map.get_spawns();
+    pub fn new(session: P2PSession<GgrsConfig>, local_handle: usize, map: Map) -> Self {
+        let (p1_spawns, p2_spawns) = map.get_spawns();
         let p1_spawn = p1_spawns[0];
         let p2_spawn = p2_spawns[0];
         let my_spawn = if local_handle == 0 {
@@ -61,7 +59,7 @@ impl ActiveGame {
                 score_p1: 0,
                 score_p2: 0,
                 events: Vec::new(),
-                map: loaded_map,
+                map,
                 rng_seed: seed,
                 frame_count: 0,
             },
@@ -69,12 +67,11 @@ impl ActiveGame {
                 cam_pos: my_spawn,
                 ..Default::default()
             },
-            assets: Assets::load(),
         }
     }
 }
 
-pub fn game_loop(game: &mut ActiveGame) {
+pub fn game_loop(game: &mut ActiveGame, assets: &Assets) {
     let dt = get_frame_time();
     game.effects.update(dt);
 
@@ -155,7 +152,7 @@ pub fn game_loop(game: &mut ActiveGame) {
                             game.state = cell.load().unwrap();
                         }
                         ggrs::GgrsRequest::AdvanceFrame { inputs } => {
-                            game.state.advance([inputs[0], inputs[1]]);
+                            game.state.advance([inputs[0], inputs[1]], assets);
                             frame_events.append(&mut game.state.events);
                         }
                     }
@@ -168,7 +165,7 @@ pub fn game_loop(game: &mut ActiveGame) {
     }
 
     set_camera(&camera);
-    draw_map(&game.state.map, &game.assets);
+    draw_map(&game.state.map, &assets);
 
     if let Utillity::Usb(Some(pos)) = game.state.p1.util {
         draw_rectangle(pos.x - 8.0, pos.y - 14.0, 16.0, 28.0, GOLD);

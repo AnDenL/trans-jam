@@ -3,6 +3,7 @@ use macroquad::prelude::*;
 use crate::assets::Assets;
 use crate::game::game_loop;
 use crate::maps::{TILE_SIZE, Tile, load_default_map};
+use crate::player::Input;
 use crate::simulation::GgrsConfig;
 use crate::ui::*;
 
@@ -10,6 +11,7 @@ mod assets;
 mod config;
 mod game;
 mod maps;
+mod net;
 mod physics;
 mod player;
 mod render;
@@ -33,12 +35,12 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    let bg = Color::new(0.02, 0.03, 0.05, 1.0);
+    let bg = Color::new(0.08, 0.10, 0.15, 1.0);
     let mut state = State::Menu;
 
     //let conf_file = load_file("config.txt");
 
-    let mut username = "username".to_owned();
+    let mut map_name = "map.txt".to_owned();
     let mut port = "7575".to_owned();
     let mut address = "127.0.0.1".to_owned();
 
@@ -47,27 +49,42 @@ async fn main() {
         global_map.w as f32 * TILE_SIZE * 0.5,
         global_map.h as f32 * TILE_SIZE * 0.5,
     );
-    let mut editor_map_name = "map.txt".to_string();
     let mut editor_selected_tile = Tile::Wall;
-    let mut global_assets = Assets::load();
+    let global_assets = Assets::load().await;
 
     loop {
         clear_background(bg);
 
+        if !matches!(state, State::Game(_)) && !matches!(state, State::Editor) {
+            draw_menu_background();
+        }
+
+        let mut next_state = None;
+
         match state {
-            State::Menu => draw_menu(&mut state, &mut username),
+            State::Menu => draw_menu(&mut state),
             State::Settings => draw_settings(&mut state),
-            State::Host => draw_host(&mut state, &mut username, &mut port),
-            State::Join => draw_join(&mut state, &mut username, &mut port, &mut address),
+            State::Host => draw_host(&mut state, &mut port, &mut map_name),
+            State::Join => draw_join(&mut state, &mut port, &mut address),
+            State::ConnectingHost(ref mut syncer) => {
+                next_state = draw_connecting_host(syncer);
+            }
+            State::ConnectingJoin(ref mut syncer) => {
+                next_state = draw_connecting_join(syncer);
+            }
             State::Editor => editor_loop(
                 &mut state,
                 &mut global_map,
                 &mut editor_cam,
-                &mut editor_map_name,
+                &mut map_name,
                 &mut editor_selected_tile,
                 &global_assets,
             ),
-            State::Game(ref mut game) => game_loop(game),
+            State::Game(ref mut game) => game_loop(game, &global_assets),
+        }
+
+        if let Some(new_state) = next_state {
+            state = new_state;
         }
 
         next_frame().await

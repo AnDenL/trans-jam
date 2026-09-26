@@ -224,6 +224,88 @@ pub fn resolve_circle_collision(pos: &mut Vec2, radius: f32, map: &Map, ignore_b
     }
 }
 
+pub fn raycast_solid(origin: Vec2, dir: Vec2, max_dist: f32, map: &Map) -> Option<TileHit> {
+    if dir.length_squared() < 0.0001 {
+        return None;
+    }
+    let dir = dir.normalize();
+    let mut map_x = (origin.x / TILE_SIZE).floor() as i32;
+    let mut map_y = (origin.y / TILE_SIZE).floor() as i32;
+
+    let delta_dist_x = if dir.x.abs() < 1e-6 {
+        f32::INFINITY
+    } else {
+        (TILE_SIZE / dir.x).abs()
+    };
+    let delta_dist_y = if dir.y.abs() < 1e-6 {
+        f32::INFINITY
+    } else {
+        (TILE_SIZE / dir.y).abs()
+    };
+
+    let step_x = if dir.x < 0.0 { -1 } else { 1 };
+    let step_y = if dir.y < 0.0 { -1 } else { 1 };
+
+    let mut side_dist_x = if dir.x < 0.0 {
+        (origin.x - map_x as f32 * TILE_SIZE) / dir.x.abs()
+    } else {
+        ((map_x + 1) as f32 * TILE_SIZE - origin.x) / dir.x.abs()
+    };
+    let mut side_dist_y = if dir.y < 0.0 {
+        (origin.y - map_y as f32 * TILE_SIZE) / dir.y.abs()
+    } else {
+        ((map_y + 1) as f32 * TILE_SIZE - origin.y) / dir.y.abs()
+    };
+
+    let mut hit = false;
+    let mut hit_normal = Vec2::ZERO;
+    let mut dist = 0.0;
+    let mut hit_tile = Tile::Empty;
+
+    for _ in 0..64 {
+        if side_dist_x < side_dist_y {
+            dist = side_dist_x;
+            side_dist_x += delta_dist_x;
+            map_x += step_x;
+            hit_normal = vec2(-step_x as f32, 0.0);
+        } else {
+            dist = side_dist_y;
+            side_dist_y += delta_dist_y;
+            map_y += step_y;
+            hit_normal = vec2(0.0, -step_y as f32);
+        }
+
+        if dist > max_dist {
+            break;
+        }
+
+        if map_x < 0 || map_x >= map.w as i32 || map_y < 0 || map_y >= map.h as i32 {
+            hit = true;
+            hit_tile = Tile::Wall;
+            break;
+        }
+
+        let tile = map.get(map_x, map_y);
+        if tile == Tile::Wall || tile == Tile::Mirror {
+            hit = true;
+            hit_tile = tile;
+            break;
+        }
+    }
+
+    if hit && dist <= max_dist {
+        Some(TileHit {
+            point: origin + dir * dist,
+            normal: hit_normal,
+            distance: dist,
+            tile_coord: (map_x as usize, map_y as usize),
+            tile_type: hit_tile,
+        })
+    } else {
+        None
+    }
+}
+
 pub enum ZipperResult {
     Teleported(Vec2),
     FellIntoVoid,
